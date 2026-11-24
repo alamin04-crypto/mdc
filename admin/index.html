@@ -784,8 +784,9 @@ function digits(s){ return String(s==null?"":s).replace(/[^0-9]/g,""); }
 function patientById(pid){ for(var i=0;i<state.patients.length;i++) if(state.patients[i].id===pid) return state.patients[i]; return null; }
 function matchPatientQuery(p, q){
   if(!q) return true;
+  if(!p) return false;
   var dq = digits(q);
-  return p.name.toLowerCase().indexOf(q)>-1 || p.id.toLowerCase().indexOf(q)>-1 || (dq.length>=3 && digits(p.phone).indexOf(dq)>-1);
+  return (p.name||"").toLowerCase().indexOf(q)>-1 || (p.id||"").toLowerCase().indexOf(q)>-1 || (dq.length>=3 && digits(p.phone).indexOf(dq)>-1);
 }
 
 /* ---------- Staff passwords: SHA-256 hashes only, never plain text ----------
