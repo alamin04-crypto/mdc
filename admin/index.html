@@ -452,7 +452,7 @@
           </div>
           <div class="gsearch">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
-            <input type="search" id="globalSearch" placeholder="Search patient by User ID or phone number…" autocomplete="off" aria-label="Search patient by User ID or phone number" />
+            <input type="search" id="globalSearch" placeholder="Search patient by name, User ID or phone number…" autocomplete="off" aria-label="Search patient by name, User ID or phone number" />
             <div class="gsearch-results" id="gsResults" role="listbox" aria-label="Patient search results"></div>
           </div>
           <div class="topbar-right">
@@ -547,6 +547,10 @@ function pageAllowed(page){
   /* Follow-up Settings lives on the Doctors page — holding the Follow-up Window &
      Booking Fees permission alone is enough to open that page (e.g. the CEO) */
   if(page === "doctors" && can("followupFees")) return true;
+  /* The Reports page can also be OPENED with Report Download alone (Doctor, CEO…) —
+     those roles can view every report uploaded for a patient; uploading, publishing,
+     replacing and deleting on that page stay gated by Report Upload */
+  if(page === "reports" && can("reportDownload")) return true;
   /* The payment-proof verification queue lives on the Payment Dashboard — the
      Payment Team, Admin and CEO can open that page to verify proofs even without
      the Approvals permission (the CEO figures on it stay CEO-gated) */
@@ -1193,7 +1197,9 @@ function renderDashboard(){
   var todayAppts = state.appointments.filter(function(a){ return a.date === "Today"; });
   var myDoc = myDoctor();
   if(myDoc) todayAppts = todayAppts.filter(function(a){ return apptDocOf(a) === myDoc.name; });
-  var dashReps = myDoc ? state.reports.filter(function(r){ return reportIsMine(r); }) : state.reports;
+  /* Doctors see the latest uploaded reports of all patients here too — the full
+     list is on the Reports page and in each patient's profile (header search) */
+  var dashReps = state.reports;
   var repsToday = reportsOn(today), repsYday = reportsOn(yday);
   var invToday = invoicesOn(today), invYday = invoicesOn(yday);
   var paidToday = 0, paidYday = 0, dSale = 0, dDisc = 0;
@@ -1357,7 +1363,7 @@ function renderReception(){
     + tile("invoices", "Test booking & invoice", "Select tests, apply referral / promo / manual discount, download the invoice copy", "testBooking")
     + tile("invoices", "Take payment", "Cash, bKash or Nagad — payment entry per permission", "paymentAccess")
     + tile("doctors", "Doctor appointment", "Book a doctor and get the automatic serial number", "doctorAppt")
-    + tile("reports", "Reports", "See published & pending reports for a patient", "reportUpload")
+    + (canAny(["reportUpload","reportDownload"]) ? tile("reports", "Reports", "See published & pending reports for a patient", null) : "")
     + tile("referrals", "Referral accounts", "Approved referrers, promo codes and discounts", "referralAccess")
     + '</div>';
   html += '<div class="card" style="margin-top:16px"><div class="card-head"><div><h3>Today\'s serial queue</h3><div class="card-sub">Serials are counted per doctor, per day — today\'s serial is that doctor\'s bookings today + 1, and tomorrow starts again from Serial 1</div></div></div>'
@@ -2768,8 +2774,14 @@ document.addEventListener("click", function(e){
 
 /* =================== Report Upload =================== */
 function renderReports(){
-  var html = '<div class="note-box" style="margin-bottom:16px"><b>Patient privacy:</b> a report is visible only to the patient it belongs to (User ID + login) and to staff with report permission. Every upload, replace, publish and delete is kept in the report\'s audit history. <b>Deleting a report always needs CEO approval.</b></div>'
-    + '<div class="grid c2" style="align-items:start"><div class="card"><div class="card-head"><div><h3>Upload report</h3><div class="card-sub">Search the patient by User ID, then attach the report</div></div></div>'
+  var canUp = can("reportUpload");
+  var note = '<div class="note-box" style="margin-bottom:16px"><b>Patient privacy:</b> a report is visible only to the patient it belongs to (User ID + login) and to staff with report permission. Doctors and every other role with report permission can view the reports uploaded for any patient — here, and in the patient\'s profile from the header search. Every upload, replace, publish and delete is kept in the report\'s audit history. <b>Deleting a report always needs CEO approval.</b></div>';
+  var listCard = '<div class="card"><div class="card-head"><div><h3>Reports</h3><div class="card-sub">' + (canUp ? 'Pending review and published lists' : 'All uploaded patient reports — view only; uploading &amp; publishing is done by the Report Team') + '</div></div></div>'
+    + '<div class="seg" id="repSeg" style="margin-bottom:12px"><button data-repf="" class="active">All</button><button data-repf="Pending review">Pending</button><button data-repf="published">Published</button></div>'
+    + '<div class="searchbar"><input type="search" id="repSearch" placeholder="Search by User ID, phone number or name…" /></div><div id="repList"></div></div>';
+  var html = note;
+  if(canUp){
+    html += '<div class="grid c2" style="align-items:start"><div class="card"><div class="card-head"><div><h3>Upload report</h3><div class="card-sub">Search the patient by User ID, then attach the report</div></div></div>'
     + '<form id="repForm"><div class="form-grid">'
     + '<div class="field full"><label>Patient (User ID)</label><select name="pid">' + state.patients.map(function(p){ return '<option value="' + p.id + '">' + esc(p.name) + ' (' + p.id + ')</option>'; }).join("") + '</select></div>'
     + '<div class="field full"><label>Test / investigation</label><input name="test" required placeholder="e.g. Lipid Profile" /></div>'
@@ -2777,9 +2789,10 @@ function renderReports(){
     + '<div class="field full"><label>Report verified by (doctor name &amp; designation)</label><select name="doctor">' + state.doctors.map(function(d){ return '<option>' + esc(d.name + ", " + d.deg) + '</option>'; }).join("") + '</select></div>'
     + '<div class="field full"><label>Report file (PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Demo: the file name is recorded; the file itself is not stored.</div></div></div>'
     + '</div><button class="btn primary" type="submit" style="min-height:44px">Upload report</button></form></div>'
-    + '<div class="card"><div class="card-head"><div><h3>Reports</h3><div class="card-sub">Pending review and published lists</div></div></div>'
-    + '<div class="seg" id="repSeg" style="margin-bottom:12px"><button data-repf="" class="active">All</button><button data-repf="Pending review">Pending</button><button data-repf="published">Published</button></div>'
-    + '<div class="searchbar"><input type="search" id="repSearch" placeholder="Search by User ID, phone number or name…" /></div><div id="repList"></div></div></div>';
+    + listCard + '</div>';
+  } else {
+    html += listCard;
+  }
   $("#sec-reports").innerHTML = html;
   drawReports();
   $("#repSearch").addEventListener("input", drawReports);
@@ -2788,7 +2801,8 @@ function renderReports(){
     $$("#repSeg button").forEach(function(x){ x.classList.toggle("active", x===b); });
     drawReports();
   });
-  $("#repForm").addEventListener("submit", function(e){
+  var repFormEl = $("#repForm");
+  if(repFormEl) repFormEl.addEventListener("submit", function(e){
     e.preventDefault(); var fd = new FormData(e.target);
     var pat = state.patients.filter(function(p){ return p.id===fd.get("pid"); })[0];
     var f = $("#repFile").files[0];
@@ -2806,8 +2820,10 @@ function drawReports(){
   var activeBtn = $("#repSeg button.active");
   repFilterMode = activeBtn ? activeBtn.dataset.repf : "";
   var inp = $("#repSearch"), q = inp ? (inp.value||"").toLowerCase() : "";
+  var canUp = can("reportUpload");
   var rows = state.reports.filter(function(r){
-    if(isDoctorScope() && !reportIsMine(r)) return false;
+    /* Doctors (and every role with report permission) see ALL reports uploaded
+       for patients — not only the ones verified by themselves */
     if(repFilterMode==="Pending review" && r.status!=="Pending review") return false;
     if(repFilterMode==="published" && r.status==="Pending review") return false;
     if(!q) return true;
@@ -2823,11 +2839,12 @@ function drawReports(){
       + '<div style="margin-left:auto;text-align:right">' + pillFor(r.status)
       + '<div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">'
       + '<button class="btn small" data-rep-view="' + r.id + '">View</button>'
-      + (r.status==="Pending review" ? '<button class="btn small primary" data-rep-ready="' + r.id + '">Approve &amp; publish</button>' : '')
-      + (r.status==="Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')
-      + '<button class="btn small" data-rep-edit="' + r.id + '">Replace / edit</button>'
+      + '<button class="btn small" data-pat-profile="' + r.pid + '">Patient profile</button>'
+      + (canUp && r.status==="Pending review" ? '<button class="btn small primary" data-rep-ready="' + r.id + '">Approve &amp; publish</button>' : '')
+      + (canUp && r.status==="Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')
+      + (canUp ? '<button class="btn small" data-rep-edit="' + r.id + '">Replace / edit</button>' : '')
       + '<button class="btn small ghost" data-rep-history="' + r.id + '">History</button>'
-      + '<button class="btn small ghost" style="color:var(--red)" data-rep-del="' + r.id + '">Delete</button>'
+      + (canUp ? '<button class="btn small ghost" style="color:var(--red)" data-rep-del="' + r.id + '">Delete</button>' : '')
       + '</div></div></div></div>';
   }).join("") : '<div class="empty">' + (q || repFilterMode ? "No reports match." : "No reports uploaded yet.") + '</div>';
 }
@@ -2862,7 +2879,10 @@ function reportDetail(r){
 }
 document.addEventListener("click", function(e){
   var vb = e.target.closest("[data-rep-view]");
-  if(vb){ var r = state.reports.filter(function(x){ return x.id===vb.dataset.repView; })[0]; if(r){ if(isDoctorScope() && !reportIsMine(r)){ toast("That report belongs to another doctor"); return; } reportDetail(r); } }
+  /* Any role with report permission — doctors included — can open any patient's
+     uploaded report. Only the doctor's private note inside stays restricted
+     (that report's own doctor, the CEO and the Super Admin). */
+  if(vb){ var r = state.reports.filter(function(x){ return x.id===vb.dataset.repView; })[0]; if(r) reportDetail(r); }
 });
 function reportEditForm(r){
   openModal('<h3>Replace / edit report — ' + r.id + '</h3><p class="m-sub">' + esc(r.test) + ' for ' + esc(r.patient) + ' (' + r.pid + '). The change is recorded in the audit history.</p>'
@@ -3945,9 +3965,10 @@ applyPermissions();
       box.classList.add("open"); return;
     }
     box.innerHTML = results.map(function(p, i){
+      var repN = state.reports.filter(function(r){ return r.pid === p.id; }).length;
       return '<button type="button" class="gs-item' + (i===sel ? " sel" : "") + '" data-gs="' + p.id + '" role="option">'
         + '<span style="min-width:0"><span class="t-name" style="display:block">' + esc(p.name) + '</span>'
-        + '<span class="t-sub mono">' + p.id + ' · ' + esc(p.phone) + '</span></span>'
+        + '<span class="t-sub mono">' + p.id + ' · ' + esc(p.phone) + (repN ? ' · ' + repN + (repN === 1 ? ' report' : ' reports') : '') + '</span></span>'
         + '<span style="margin-left:auto">' + pillFor(p.status) + '</span></button>';
     }).join("");
     box.classList.add("open");
@@ -3980,8 +4001,10 @@ function openPatientProfile(pid){
   var reps = state.reports.filter(function(r){ return r.pid === pid; });
   var myDocP = myDoctor();
   if(myDocP){
+    /* A doctor's appointment list in a profile stays limited to their own
+       appointments — but the patient's uploaded REPORTS are all visible to the
+       doctor, whichever doctor verified them */
     appts = appts.filter(function(a){ return apptDocOf(a) === myDocP.name; });
-    reps = reps.filter(function(r){ return reportIsMine(r); });
   }
   var showPay = can("paymentAccess") || !!myDocP;
   function row(main, sub, right){
@@ -4591,7 +4614,7 @@ Object.assign(BN, {
 "CEO Payment Dashboard":"CEO পেমেন্ট ড্যাশবোর্ড","— every figure below is computed live from the invoices, payments and refunds in the shared record, in taka. “Today” is":"— নিচের প্রতিটি হিসাব শেয়ার্ড রেকর্ডের ইনভয়েস, পেমেন্ট ও ফেরত থেকে লাইভ হিসাব করা, টাকায়। “আজ” হলো","(the latest day in the record).":"(রেকর্ডের সর্বশেষ দিন)।","No refund is ever given without CEO approval":"CEO অনুমোদন ছাড়া কখনো কোনো ফেরত দেওয়া হয় না","— staff file a refund request with a reason note, and it is recorded only when the CEO approves it in the CEO Approval queue or here.":"— স্টাফ কারণ নোটসহ ফেরতের অনুরোধ দেন, এবং CEO অনুমোদন সারিতে বা এখানে CEO অনুমোদন করলেই তা রেকর্ড হয়।","Today's Deposit":"আজকের জমা","Today's Refund":"আজকের ফেরত","CEO-approved refunds paid out today":"আজ পরিশোধিত CEO-অনুমোদিত ফেরত","No refunds paid out today":"আজ কোনো ফেরত পরিশোধ হয়নি","All deposits recorded this month":"এই মাসে রেকর্ডকৃত সব জমা","CEO-approved refunds this month":"এই মাসে CEO-অনুমোদিত ফেরত","No refunds this month":"এই মাসে কোনো ফেরত নেই","Gross deposits, all time":"সর্বকালের মোট জমা","Net collected":"নিট সংগ্রহ","Collected minus approved refunds":"সংগ্রহ বিয়োগ অনুমোদিত ফেরত","Total billed":"মোট বিল","Final payable across all invoices":"সব ইনভয়েসে চূড়ান্ত পরিশোধযোগ্য","Total discount given":"মোট ছাড় দেওয়া","Referral + category + manual discounts":"রেফারেল + ক্যাটাগরি + ম্যানুয়াল ছাড়","This week's collections":"এই সপ্তাহের কালেকশন","Last 7 days, up to today":"গত 7 দিন, আজ পর্যন্ত","Total refunded (all time)":"মোট ফেরত (সর্বকাল)","Refund requests waiting":"অপেক্ষমাণ ফেরত অনুরোধ","Decide them below or in CEO Approval":"নিচে বা CEO অনুমোদন পেজে সিদ্ধান্ত নিন","The refund queue is clear":"ফেরতের সারি খালি","Payment-method breakdown":"পেমেন্ট মাধ্যমের বিবরণ","Where the deposits came from — from the payment ledger":"জমা কোথা থেকে এসেছে — পেমেন্ট লেজার থেকে","No deposits recorded yet.":"এখনো কোনো জমা রেকর্ড হয়নি।","Refund requests":"ফেরতের অনুরোধ","Every request carries the requester's reason note — nothing is refunded without your approval":"প্রতিটি অনুরোধে অনুরোধকারীর কারণ নোট থাকে — আপনার অনুমোদন ছাড়া কিছুই ফেরত হয় না","Open CEO Approval":"CEO অনুমোদন খুলুন","Reason:":"কারণ:","Requested by":"অনুরোধ করেছেন","· Decided by":"· সিদ্ধান্ত নিয়েছেন","Approve refund":"ফেরত অনুমোদন করুন","No refund requests yet — staff file them from an invoice, with a reason note.":"এখনো কোনো ফেরত অনুরোধ নেই — স্টাফ ইনভয়েস থেকে কারণ নোটসহ এগুলো দেন।","Recent transactions":"সাম্প্রতিক লেনদেন","Latest deposits and CEO-approved refunds":"সর্বশেষ জমা ও CEO-অনুমোদিত ফেরত","Open Invoices & Billing":"ইনভয়েস ও বিলিং খুলুন","No transactions recorded yet.":"এখনো কোনো লেনদেন রেকর্ড হয়নি।","The Payment Dashboard is for the CEO and the Super Admin — deposits, refunds and refund decisions are CEO-level information.":"পেমেন্ট ড্যাশবোর্ড CEO ও সুপার অ্যাডমিনের জন্য — জমা, ফেরত ও ফেরতের সিদ্ধান্ত CEO-পর্যায়ের তথ্য।",
 "Download accounts report":"হিসাবের রিপোর্ট ডাউনলোড","A spreadsheet (CSV) of deposits and CEO-approved refunds — computed live from the same record, in taka":"জমা ও CEO-অনুমোদিত ফেরতের স্প্রেডশিট (CSV) — একই রেকর্ড থেকে লাইভ হিসাব করা, টাকায়","Date range":"তারিখের পরিসর","This week (last 7 days)":"এই সপ্তাহ (গত 7 দিন)","This month":"এই মাস","Custom — pick dates":"কাস্টম — তারিখ বেছে নিন","Payment method":"পেমেন্ট মাধ্যম","All methods":"সব মাধ্যম","From date":"শুরুর তারিখ","To date":"শেষের তারিখ","Show":"দেখান","Deposits & refunds":"জমা ও ফেরত","Deposits only":"শুধু জমা","Refunds only":"শুধু ফেরত","Download report (CSV)":"রিপোর্ট ডাউনলোড (CSV)","Columns: Date, Patient, Patient ID, Invoice, Method, Type, Deposit (Taka), Refund (Taka), Balance (Taka) — with totals. Every download is recorded in the audit log.":"কলাম: তারিখ, রোগী, রোগীর আইডি, ইনভয়েস, মাধ্যম, ধরন, জমা (টাকা), ফেরত (টাকা), ব্যালেন্স (টাকা) — মোটসহ। প্রতিটি ডাউনলোড অডিট লগে রেকর্ড হয়।","Only the CEO or Super Admin can download the accounts report":"শুধু CEO বা সুপার অ্যাডমিন হিসাবের রিপোর্ট ডাউনলোড করতে পারেন",
 "· Paid":"· পরিশোধিত","· Already refunded":"· ইতিমধ্যে ফেরত","No refund is given from here.":"এখান থেকে কোনো ফেরত দেওয়া হয় না।","Your request — with the reason note — goes to the CEO approval queue, and the refund happens only if the CEO approves it.":"আপনার অনুরোধ — কারণ নোটসহ — CEO অনুমোদন সারিতে যায়, এবং CEO অনুমোদন করলেই ফেরত হয়।","Refund amount (৳)":"ফেরতের পরিমাণ (৳)","Refund method":"ফেরতের মাধ্যম","Reason for the refund — note (required)":"ফেরতের কারণ — নোট (আবশ্যক)","Write clearly why this refund is being requested — the CEO reads this note before deciding…":"স্পষ্ট করে লিখুন কেন এই ফেরত চাওয়া হচ্ছে — সিদ্ধান্তের আগে CEO এই নোট পড়েন…","Send to CEO for approval":"অনুমোদনের জন্য CEO-র কাছে পাঠান","Write the reason note — the CEO cannot decide without it":"কারণ নোট লিখুন — এটি ছাড়া CEO সিদ্ধান্ত নিতে পারেন না","Only the CEO or Super Admin can decide a refund":"শুধু CEO বা সুপার অ্যাডমিন ফেরতের সিদ্ধান্ত নিতে পারেন",
-"Patient privacy:":"রোগীর গোপনীয়তা:","a report is visible only to the patient it belongs to (User ID + login) and to staff with report permission. Every upload, replace, publish and delete is kept in the report's audit history.":"একটি রিপোর্ট শুধু সেই রোগী (ইউজার আইডি + লগইন) এবং রিপোর্ট অনুমতিপ্রাপ্ত স্টাফ দেখতে পারেন। প্রতিটি আপলোড, বদলি, প্রকাশ ও মুছে ফেলা রিপোর্টের অডিট ইতিহাসে থাকে।","Deleting a report always needs CEO approval.":"রিপোর্ট মুছতে সবসময় CEO অনুমোদন লাগে।","Upload report":"রিপোর্ট আপলোড","Search the patient by User ID, then attach the report":"ইউজার আইডি দিয়ে রোগী খুঁজুন, তারপর রিপোর্ট সংযুক্ত করুন","Patient (User ID)":"রোগী (ইউজার আইডি)","Test / investigation":"টেস্ট / পরীক্ষা","Test date":"টেস্টের তারিখ","Report verified by (doctor name & designation)":"রিপোর্ট যাচাই করেছেন (ডাক্তারের নাম ও পদবি)","Report file (PDF / JPG / PNG)":"রিপোর্ট ফাইল (PDF / JPG / PNG)","Demo: the file name is recorded; the file itself is not stored.":"ডেমো: ফাইলের নাম রেকর্ড হয়; ফাইল নিজে সংরক্ষিত হয় না।","Pending review and published lists":"পর্যালোচনা অপেক্ষমাণ ও প্রকাশিত তালিকা","· Test:":"· টেস্ট:","· Uploaded":"· আপলোড","· Patient":"· রোগী","· Private doctor note added":"· ব্যক্তিগত ডাক্তার নোট যোগ করা হয়েছে","Approve & publish":"অনুমোদন ও প্রকাশ","Mark delivered":"ডেলিভারি হয়েছে চিহ্নিত করুন","Replace / edit":"বদলি / সম্পাদনা","No reports match.":"কোনো রিপোর্ট মেলে না।","No reports uploaded yet.":"এখনো কোনো রিপোর্ট আপলোড হয়নি।","· Verified by":"· যাচাই করেছেন","Test date:":"টেস্টের তারিখ:","· Status:":"· স্ট্যাটাস:","Doctor's private note":"ডাক্তারের ব্যক্তিগত নোট","Visible only to this report's own doctor, the CEO and the Super Admin — never to the patient, never to other doctors or other roles, and never printed or exported.":"শুধু এই রিপোর্টের নিজের ডাক্তার, CEO ও সুপার অ্যাডমিন দেখতে পারেন — রোগীকে কখনো নয়, অন্য ডাক্তার বা অন্য রোলকে নয়, এবং কখনো প্রিন্ট বা এক্সপোর্ট হয় না।","No note on this report yet.":"এই রিপোর্টে এখনো কোনো নোট নেই।","By":"লিখেছেন","Edit the note":"নোট সম্পাদনা করুন","Write a note on this report":"এই রিপোর্টে একটি নোট লিখুন","Private note — only you, the CEO and the Super Admin can read this…":"ব্যক্তিগত নোট — শুধু আপনি, CEO ও সুপার অ্যাডমিন এটি পড়তে পারেন…","Save private note":"ব্যক্তিগত নোট সেভ করুন",". The change is recorded in the audit history.":"। পরিবর্তনটি অডিট ইতিহাসে রেকর্ড হয়।","Verified by (doctor & designation)":"যাচাই করেছেন (ডাক্তার ও পদবি)","Replace file (optional — PDF / JPG / PNG)":"ফাইল বদলান (ঐচ্ছিক — PDF / JPG / PNG)","Current file:":"বর্তমান ফাইল:","No history recorded.":"কোনো ইতিহাস রেকর্ড নেই।","Published to patient":"রোগীর কাছে প্রকাশিত","Details edited":"বিবরণ সম্পাদিত","That report belongs to another doctor":"সেই রিপোর্ট অন্য ডাক্তারের","Write the note first":"আগে নোট লিখুন","Report deleted":"রিপোর্ট মোছা হয়েছে","Delete sent to the CEO approval queue — report not deleted yet":"মোছা CEO অনুমোদন সারিতে পাঠানো হয়েছে — রিপোর্ট এখনো মোছা হয়নি"
+"Patient privacy:":"রোগীর গোপনীয়তা:","a report is visible only to the patient it belongs to (User ID + login) and to staff with report permission. Doctors and every other role with report permission can view the reports uploaded for any patient — here, and in the patient's profile from the header search. Every upload, replace, publish and delete is kept in the report's audit history.":"একটি রিপোর্ট শুধু সেই রোগী (ইউজার আইডি + লগইন) এবং রিপোর্ট অনুমতিপ্রাপ্ত স্টাফ দেখতে পারেন। ডাক্তার এবং রিপোর্ট অনুমতিপ্রাপ্ত প্রতিটি রোল যেকোনো রোগীর আপলোড করা রিপোর্ট দেখতে পারেন — এখানে, এবং হেডার সার্চ থেকে রোগীর প্রোফাইলে। প্রতিটি আপলোড, বদলি, প্রকাশ ও মুছে ফেলা রিপোর্টের অডিট ইতিহাসে থাকে।","Deleting a report always needs CEO approval.":"রিপোর্ট মুছতে সবসময় CEO অনুমোদন লাগে।","Upload report":"রিপোর্ট আপলোড","Search the patient by User ID, then attach the report":"ইউজার আইডি দিয়ে রোগী খুঁজুন, তারপর রিপোর্ট সংযুক্ত করুন","Patient (User ID)":"রোগী (ইউজার আইডি)","Test / investigation":"টেস্ট / পরীক্ষা","Test date":"টেস্টের তারিখ","Report verified by (doctor name & designation)":"রিপোর্ট যাচাই করেছেন (ডাক্তারের নাম ও পদবি)","Report file (PDF / JPG / PNG)":"রিপোর্ট ফাইল (PDF / JPG / PNG)","Demo: the file name is recorded; the file itself is not stored.":"ডেমো: ফাইলের নাম রেকর্ড হয়; ফাইল নিজে সংরক্ষিত হয় না।","Pending review and published lists":"পর্যালোচনা অপেক্ষমাণ ও প্রকাশিত তালিকা","All uploaded patient reports — view only; uploading & publishing is done by the Report Team":"আপলোড করা সব রোগীর রিপোর্ট — শুধু দেখা যাবে; আপলোড ও প্রকাশ রিপোর্ট টিম করে","Patient profile":"রোগীর প্রোফাইল","· Test:":"· টেস্ট:","· Uploaded":"· আপলোড","· Patient":"· রোগী","· Private doctor note added":"· ব্যক্তিগত ডাক্তার নোট যোগ করা হয়েছে","Approve & publish":"অনুমোদন ও প্রকাশ","Mark delivered":"ডেলিভারি হয়েছে চিহ্নিত করুন","Replace / edit":"বদলি / সম্পাদনা","No reports match.":"কোনো রিপোর্ট মেলে না।","No reports uploaded yet.":"এখনো কোনো রিপোর্ট আপলোড হয়নি।","· Verified by":"· যাচাই করেছেন","Test date:":"টেস্টের তারিখ:","· Status:":"· স্ট্যাটাস:","Doctor's private note":"ডাক্তারের ব্যক্তিগত নোট","Visible only to this report's own doctor, the CEO and the Super Admin — never to the patient, never to other doctors or other roles, and never printed or exported.":"শুধু এই রিপোর্টের নিজের ডাক্তার, CEO ও সুপার অ্যাডমিন দেখতে পারেন — রোগীকে কখনো নয়, অন্য ডাক্তার বা অন্য রোলকে নয়, এবং কখনো প্রিন্ট বা এক্সপোর্ট হয় না।","No note on this report yet.":"এই রিপোর্টে এখনো কোনো নোট নেই।","By":"লিখেছেন","Edit the note":"নোট সম্পাদনা করুন","Write a note on this report":"এই রিপোর্টে একটি নোট লিখুন","Private note — only you, the CEO and the Super Admin can read this…":"ব্যক্তিগত নোট — শুধু আপনি, CEO ও সুপার অ্যাডমিন এটি পড়তে পারেন…","Save private note":"ব্যক্তিগত নোট সেভ করুন",". The change is recorded in the audit history.":"। পরিবর্তনটি অডিট ইতিহাসে রেকর্ড হয়।","Verified by (doctor & designation)":"যাচাই করেছেন (ডাক্তার ও পদবি)","Replace file (optional — PDF / JPG / PNG)":"ফাইল বদলান (ঐচ্ছিক — PDF / JPG / PNG)","Current file:":"বর্তমান ফাইল:","No history recorded.":"কোনো ইতিহাস রেকর্ড নেই।","Published to patient":"রোগীর কাছে প্রকাশিত","Details edited":"বিবরণ সম্পাদিত","That report belongs to another doctor":"সেই রিপোর্ট অন্য ডাক্তারের","Write the note first":"আগে নোট লিখুন","Report deleted":"রিপোর্ট মোছা হয়েছে","Delete sent to the CEO approval queue — report not deleted yet":"মোছা CEO অনুমোদন সারিতে পাঠানো হয়েছে — রিপোর্ট এখনো মোছা হয়নি"
 });
 Object.assign(BN, {
 "Payment proof verification":"পেমেন্ট প্রমাণ যাচাই","Proofs patients submitted for an online payment — screenshot, TrxID and the mobile number they paid from (bKash / Nagad). Confirming marks the payment Paid on the invoice and appointment everywhere; marking Failed needs a reason note, which the patient sees.":"অনলাইন পেমেন্টের জন্য রোগীদের জমা দেওয়া প্রমাণ — স্ক্রিনশট, TrxID এবং যে মোবাইল নম্বর থেকে পরিশোধ করেছেন (বিকাশ / নগদ)। নিশ্চিত করলে ইনভয়েস ও অ্যাপয়েন্টমেন্টে সব জায়গায় পেমেন্ট পরিশোধিত হয়; ব্যর্থ চিহ্নিত করতে কারণ নোট লাগে, যা রোগী দেখতে পান।","Queue clear":"সারি খালি","Under Review":"পর্যালোচনাধীন","Failed":"ব্যর্থ","TrxID:":"TrxID:","· Payer mobile:":"· পরিশোধকারীর মোবাইল:","Payer mobile:":"পরিশোধকারীর মোবাইল:","Submitted:":"জমা দেওয়া হয়েছে:","Verified by":"যাচাই করেছেন","Patient:":"রোগী:","Amount:":"পরিমাণ:","Confirm — mark Paid":"নিশ্চিত করুন — পরিশোধিত চিহ্নিত করুন","Mark failed":"ব্যর্থ চিহ্নিত করুন","View screenshot":"স্ক্রিনশট দেখুন","No image":"কোনো ছবি নেই","No payment proofs submitted yet — when a patient pays online and uploads the payment screenshot with the TrxID and payer number, it appears here for verification.":"এখনো কোনো পেমেন্ট প্রমাণ জমা পড়েনি — রোগী অনলাইনে পরিশোধ করে TrxID ও পরিশোধকারীর নম্বরসহ পেমেন্ট স্ক্রিনশট আপলোড করলে, যাচাইয়ের জন্য এখানে আসে।","Waiting for verification by the Payment Team, Admin or CEO.":"পেমেন্ট টিম, অ্যাডমিন বা CEO-র যাচাইয়ের অপেক্ষায়।","Payment screenshot submitted by the patient":"রোগীর জমা দেওয়া পেমেন্ট স্ক্রিনশট","No screenshot was uploaded with this proof.":"এই প্রমাণের সাথে কোনো স্ক্রিনশট আপলোড হয়নি।","Confirm this payment":"এই পেমেন্ট নিশ্চিত করুন","Check the screenshot, the TrxID and the payer number against the":"স্ক্রিনশট, TrxID ও পরিশোধকারীর নম্বর মিলিয়ে দেখুন","record. Confirming marks the linked invoice and appointment":"রেকর্ডের সাথে। নিশ্চিত করলে সংযুক্ত ইনভয়েস ও অ্যাপয়েন্টমেন্ট","everywhere, records the deposit in the payment ledger and notifies the patient.":"সব জায়গায় পরিশোধিত হয়, পেমেন্ট লেজারে জমা রেকর্ড হয় এবং রোগীকে জানানো হয়।","Mark this payment failed":"এই পেমেন্ট ব্যর্থ চিহ্নিত করুন","The patient sees the":"রোগী দেখতে পান","status with your reason note — write clearly why the payment could not be verified (for example, the TrxID does not match, or the amount is wrong).":"স্ট্যাটাস আপনার কারণ নোটসহ — স্পষ্ট করে লিখুন কেন পেমেন্ট যাচাই করা যায়নি (যেমন, TrxID মেলে না, বা পরিমাণ ভুল)।","Why did this payment fail? — reason note (required)":"কেন এই পেমেন্ট ব্যর্থ হলো? — কারণ নোট (আবশ্যক)","Write the reason — the patient sees this note with the Failed status…":"কারণটি লিখুন — রোগী ব্যর্থ স্ট্যাটাসের সাথে এই নোট দেখতে পান…","Write the reason — the patient sees it with the Failed status":"কারণ লিখুন — রোগী ব্যর্থ স্ট্যাটাসের সাথে এটি দেখতে পান","Only the Payment Team, Admin or CEO can verify a payment proof":"শুধু পেমেন্ট টিম, অ্যাডমিন বা CEO পেমেন্ট প্রমাণ যাচাই করতে পারেন","This proof was already decided":"এই প্রমাণের সিদ্ধান্ত ইতিমধ্যে হয়েছে","Proof marked Failed — the patient sees the reason":"প্রমাণ ব্যর্থ চিহ্নিত হয়েছে — রোগী কারণটি দেখতে পাবেন","The deposit, refund and collection figures are for the CEO and the Super Admin only.":"জমা, ফেরত ও কালেকশনের হিসাব শুধু CEO ও সুপার অ্যাডমিনের জন্য।"
@@ -4614,7 +4637,7 @@ Object.assign(BN, {
 });
 Object.assign(BN, {
 "All referrers":"সব রেফারার","All hospitals":"সব হাসপাতাল","All doctors":"সব ডাক্তার","All user categories":"সব ব্যবহারকারী ক্যাটাগরি",
-"Admin navigation":"অ্যাডমিন নেভিগেশন","Open menu":"মেনু খুলুন","Patient search results":"রোগী খোঁজার ফলাফল","Search patient by User ID or phone number":"ইউজার আইডি বা ফোন নম্বর দিয়ে রোগী খুঁজুন",
+"Admin navigation":"অ্যাডমিন নেভিগেশন","Open menu":"মেনু খুলুন","Patient search results":"রোগী খোঁজার ফলাফল","Search patient by User ID or phone number":"ইউজার আইডি বা ফোন নম্বর দিয়ে রোগী খুঁজুন","Search patient by name, User ID or phone number":"নাম, ইউজার আইডি বা ফোন নম্বর দিয়ে রোগী খুঁজুন",
 "Monthly revenue bar chart":"মাসিক আয়ের বার চার্ট","Average waiting time gauge":"গড় অপেক্ষার সময়ের গেজ","Services by category donut chart":"ক্যাটাগরি অনুযায়ী সার্ভিসের ডোনাট চার্ট",
 "Private doctor note added":"ব্যক্তিগত ডাক্তার নোট যোগ করা হয়েছে","Invoice:":"ইনভয়েস:",
 "e.g. Dear patient, your follow-up visit is due. Please book your follow-up appointment at the reception or from your account.":"যেমন: প্রিয় রোগী, আপনার ফলো-আপ ভিজিটের সময় হয়েছে। রিসেপশন থেকে বা আপনার অ্যাকাউন্ট থেকে ফলো-আপ অ্যাপয়েন্টমেন্ট বুক করুন।",
