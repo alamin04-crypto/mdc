@@ -344,11 +344,27 @@
       .seg-toggle button svg{flex:0 0 auto}
       .seg-toggle button.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.14)}
       #printArea{display:none}
+      /* ---------- Print sheet: the in-page print view every Print button opens ---------- */
+      #printSheet{display:none}
+      #printSheet.open{position:fixed;inset:0;z-index:90;background:rgba(10,18,15,.55);display:flex;flex-direction:column;align-items:center;padding:14px;overflow-y:auto}
+      .ps-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;width:100%;max-width:780px;background:var(--surface);color:var(--ink);border-radius:12px;padding:10px 12px;margin-bottom:12px;box-shadow:var(--shadow)}
+      .ps-title{font-weight:700;margin-right:auto;font-size:15px}
+      .ps-hint{flex:1 1 100%;font-size:12.5px;color:var(--ink2)}
+      .ps-paper{background:#fff;color:#14201c;width:100%;max-width:780px;border-radius:6px;padding:26px 24px;box-shadow:var(--shadow);font-family:sans-serif;font-size:14px;line-height:1.55}
+      .ps-paper table{border-collapse:collapse}
+      .ps-paper td,.ps-paper th{vertical-align:top}
+      .ps-paper h2{margin:0 0 4px}
+      .ps-paper hr{border:0;border-top:1px solid #999;margin:10px 0}
       @media print{
         .sidebar,.topbar,#toast,.modal-wrap{display:none !important}
         body{background:#fff;color:#1d1836}
         body.printing #app,body.printing #loginGate{display:none !important}
         body.printing #printArea{display:block !important}
+        #printSheet{display:none !important}
+        body.ps-open #app,body.ps-open #loginGate{display:none !important}
+        body.ps-open #printSheet{position:static !important;display:block !important;background:#fff;padding:0;overflow:visible}
+        body.ps-open #printSheet .ps-bar{display:none !important}
+        body.ps-open .ps-paper{box-shadow:none;border-radius:0;max-width:none;width:100%;padding:0}
       }
     </style>
   </head>
@@ -2828,57 +2844,81 @@ function downloadPdf(filename, lines){
   document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
-/* Print through a dedicated hidden iframe holding a standalone document.
-   The old approach printed the whole panel page and relied on @media print
-   rules plus a body.printing class to hide the app and reveal #printArea —
-   on the live site that produced a blank sheet (and in some browsers the
-   click appeared completely dead), because the panel's own layout, theme
-   and modal state all leaked into the print rendering. The iframe document
-   contains ONLY the document being printed, with its own simple styles, so
-   every Print button (invoice, report, appointment list, referral report,
-   analytics summary) prints the same way everywhere. */
-function printDocHTML(inner, title){
-  var doc = '<!doctype html><html><head><meta charset="utf-8"/><title>' + esc(title || "Document") + '</title>'
+/* Print flow — every Print button (invoice, report, appointment list,
+   referral report, analytics summary) funnels here.
+   Why a sheet: calling print() on a hidden frame silently does nothing
+   inside embedded previews (the click looks dead and no document ever
+   appears), and printing the panel page itself produced blank sheets.
+   So Print ALWAYS opens an in-page print sheet first — the document
+   itself on a white page, with its own toolbar — so the user always
+   sees the document. From the sheet:
+   - "Print now" opens the same document in a new browser tab that
+     starts printing itself; a top-level tab can always print. If the
+     browser blocks the new tab, it falls back to printing this page
+     with only the sheet visible (@media print + body.ps-open).
+   - "Download PDF" saves the same document as a real PDF, which works
+     everywhere — including previews where printing is blocked — and
+     the PDF can be printed from any PDF viewer. */
+var PS_CTX = {inner: "", title: "Document", lines: null, filename: "document.pdf"};
+function printDocHTML(inner, title, lines, filename){
+  PS_CTX = {inner: inner || "", title: title || "Document", lines: lines || null, filename: filename || "document.pdf"};
+  showPrintSheet();
+}
+function printDocStandalone(){
+  return '<!doctype html><html><head><meta charset="utf-8"/><title>' + esc(PS_CTX.title) + '</title>'
     + '<style>@page{margin:14mm}'
-    + 'body{font-family:sans-serif;color:#14201c;font-size:14px;line-height:1.55;margin:0}'
+    + 'body{font-family:sans-serif;color:#14201c;font-size:14px;line-height:1.55;margin:0;padding:18px}'
     + 'table{border-collapse:collapse}td,th{vertical-align:top}'
     + 'h2{margin:0 0 4px}hr{border:0;border-top:1px solid #999;margin:10px 0}'
+    + '.pbar{max-width:720px;margin:0 auto 14px;display:flex;gap:10px;align-items:center;font-size:13px}'
+    + '.pbar button{font:inherit;font-weight:700;padding:9px 18px;border-radius:8px;border:1px solid #14201c;background:#14201c;color:#fff;cursor:pointer}'
+    + '@media print{.pbar{display:none}}'
     + '</style></head><body>'
-    + '<div style="max-width:720px;margin:0 auto">' + inner + '</div>'
+    + '<div class="pbar"><button type="button" onclick="window.print()">Print</button><span>If the print dialog did not open by itself, use this button or press Ctrl+P.</span></div>'
+    + '<div style="max-width:720px;margin:0 auto">' + PS_CTX.inner + '</div>'
+    + '<script>window.addEventListener("load",function(){setTimeout(function(){try{window.print();}catch(e){}},450);});<\/script>'
     + '</body></html>';
-  try {
-    var fr = document.getElementById("printFrame");
-    if(!fr){
-      fr = document.createElement("iframe");
-      fr.id = "printFrame";
-      fr.setAttribute("aria-hidden", "true");
-      fr.setAttribute("title", "Print frame");
-      fr.style.cssText = "position:fixed;right:0;bottom:0;width:2px;height:2px;border:0;opacity:0.01;pointer-events:none";
-      document.body.appendChild(fr);
-    }
-    var fw = fr.contentWindow, fd = fw.document;
-    fd.open(); fd.write(doc); fd.close();
-    var called = false;
-    var doPrint = function(){
-      if(called) return; called = true;
-      try { fw.focus(); fw.print(); }
-      catch(e){ printViaArea(inner); }
-    };
-    if(fd.readyState === "complete") setTimeout(doPrint, 60);
-    else { fr.onload = function(){ setTimeout(doPrint, 60); }; setTimeout(doPrint, 800); }
-  } catch(e){ printViaArea(inner); }
 }
-/* Fallback: the original #printArea + body.printing route, kept only for
-   the rare browser where the print frame cannot be created. */
-function printViaArea(inner){
-  var pa = $("#printArea");
-  if(!pa){ toast("Printing is not available here — use Download PDF instead"); return; }
-  pa.innerHTML = '<div style="font-family:sans-serif;color:#14201c;max-width:720px;margin:0 auto">' + inner + '</div>';
-  document.body.classList.add("printing");
+function showPrintSheet(){
+  var sh = document.getElementById("printSheet");
+  if(!sh){
+    sh = document.createElement("div");
+    sh.id = "printSheet";
+    sh.setAttribute("role", "dialog");
+    sh.setAttribute("aria-modal", "true");
+    document.body.appendChild(sh);
+  }
+  sh.innerHTML = '<div class="ps-bar"><span class="ps-title">' + esc(PS_CTX.title) + '</span>'
+    + (PS_CTX.lines ? '<button class="btn" data-ps-pdf>Download PDF</button>' : '')
+    + '<button class="btn primary" data-ps-print>Print now</button>'
+    + '<button class="btn" data-ps-close>Close</button>'
+    + '<span class="ps-hint">Print now opens this document in a new tab and printing starts there. If no tab opens, use Download PDF and print the PDF instead.</span></div>'
+    + '<div class="ps-paper">' + PS_CTX.inner + '</div>';
+  sh.classList.add("open");
+}
+function closePrintSheet(){
+  var sh = document.getElementById("printSheet");
+  if(sh){ sh.classList.remove("open"); sh.innerHTML = ""; }
+  document.body.classList.remove("ps-open");
+}
+function printFromSheet(){
+  var w = null, url = null;
+  try {
+    url = URL.createObjectURL(new Blob([printDocStandalone()], {type: "text/html"}));
+    w = window.open(url, "_blank");
+  } catch(e){ w = null; }
+  if(w){
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+    toast("Print view opened in a new tab — printing starts there");
+    return;
+  }
+  if(url) URL.revokeObjectURL(url);
+  /* New tab blocked: print this page with only the sheet visible. */
+  document.body.classList.add("ps-open");
   var done = false;
   function cleanup(){
     if(done) return; done = true;
-    document.body.classList.remove("printing"); pa.innerHTML = "";
+    document.body.classList.remove("ps-open");
     window.removeEventListener("afterprint", cleanup);
   }
   window.addEventListener("afterprint", cleanup);
@@ -2888,6 +2928,16 @@ function printViaArea(inner){
     catch(e){ cleanup(); toast("Printing is blocked here — use Download PDF instead"); }
   }, 60);
 }
+document.addEventListener("click", function(e){
+  if(e.target.closest("[data-ps-close]")){ closePrintSheet(); return; }
+  if(e.target.closest("[data-ps-print]")){ printFromSheet(); return; }
+  if(e.target.closest("[data-ps-pdf]")){ if(PS_CTX.lines){ downloadPdf(PS_CTX.filename, PS_CTX.lines); toast("PDF downloaded — " + PS_CTX.filename); } return; }
+  var sh = document.getElementById("printSheet");
+  if(sh && sh.classList.contains("open") && e.target === sh) closePrintSheet();
+});
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape"){ var sh = document.getElementById("printSheet"); if(sh && sh.classList.contains("open")) closePrintSheet(); }
+});
 /* Document preview modal — one place for Print + PDF on every document */
 var DOC_CTX = {filename: "document.pdf", lines: []};
 function openDocModal(title, sub, innerHTML, pdfFilename, pdfLines, logWhat){
@@ -2904,7 +2954,7 @@ function openDocModal(title, sub, innerHTML, pdfFilename, pdfLines, logWhat){
 }
 document.addEventListener("click", function(e){
   var pr = e.target.closest("[data-doc-print]");
-  if(pr){ printDocHTML(DOC_CTX.inner || "", String(DOC_CTX.filename || "Document").replace(/\.pdf$/i, "")); return; }
+  if(pr){ printDocHTML(DOC_CTX.inner || "", String(DOC_CTX.filename || "Document").replace(/\.pdf$/i, ""), DOC_CTX.lines, DOC_CTX.filename); return; }
   var pd = e.target.closest("[data-doc-pdf]");
   if(pd){ downloadPdf(DOC_CTX.filename, DOC_CTX.lines); toast("PDF downloaded — " + DOC_CTX.filename); return; }
 });
@@ -2969,11 +3019,11 @@ function reportPdfLines(r){
 }
 document.addEventListener("click", function(e){
   var ip = e.target.closest("[data-inv-print]");
-  if(ip){ var inv1 = state.invoices.filter(function(i){ return i.id === ip.dataset.invPrint; })[0]; if(inv1){ DOC_CTX = {filename: inv1.id + ".pdf", lines: invoicePdfLines(inv1), inner: invoiceDocInner(inv1)}; printDocHTML(invoiceDocInner(inv1), "Invoice " + inv1.id); logActivity("inv", "Invoice <b>" + inv1.id + "</b> printed by " + session.name); } return; }
+  if(ip){ var inv1 = state.invoices.filter(function(i){ return i.id === ip.dataset.invPrint; })[0]; if(inv1){ DOC_CTX = {filename: inv1.id + ".pdf", lines: invoicePdfLines(inv1), inner: invoiceDocInner(inv1)}; printDocHTML(invoiceDocInner(inv1), "Invoice " + inv1.id, invoicePdfLines(inv1), inv1.id + ".pdf"); logActivity("inv", "Invoice <b>" + inv1.id + "</b> printed by " + session.name); } return; }
   var idf = e.target.closest("[data-inv-pdf]");
   if(idf){ var inv2 = state.invoices.filter(function(i){ return i.id === idf.dataset.invPdf; })[0]; if(inv2){ downloadPdf(inv2.id + ".pdf", invoicePdfLines(inv2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: inv2.id + " invoice PDF downloaded", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); logActivity("inv", "Invoice <b>" + inv2.id + "</b> PDF downloaded by " + session.name); refresh(); toast("Invoice PDF downloaded - " + inv2.id); } return; }
   var rp = e.target.closest("[data-rep-print]");
-  if(rp){ var r1 = state.reports.filter(function(x){ return x.id === rp.dataset.repPrint; })[0]; if(r1) printDocHTML(reportDocInner(r1), "Report " + r1.id); return; }
+  if(rp){ var r1 = state.reports.filter(function(x){ return x.id === rp.dataset.repPrint; })[0]; if(r1) printDocHTML(reportDocInner(r1), "Report " + r1.id, reportPdfLines(r1), r1.id + "-" + r1.test.replace(/[^A-Za-z0-9]+/g, "-") + ".pdf"); return; }
   var rd = e.target.closest("[data-rep-pdf]");
   if(rd){ var r2 = state.reports.filter(function(x){ return x.id === rd.dataset.repPdf; })[0]; if(r2){ downloadPdf(r2.id + "-" + r2.test.replace(/[^A-Za-z0-9]+/g, "-") + ".pdf", reportPdfLines(r2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: r2.id + " report PDF downloaded (" + r2.test + ", " + r2.patient + ")", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); toast("Report PDF downloaded - " + r2.id); } return; }
 });
@@ -4884,6 +4934,8 @@ function userBusy(){
   if(ptrDown) return true;
   var mw = document.getElementById("modalWrap");
   if(mw && mw.classList.contains("open")) return true;
+  var ps = document.getElementById("printSheet");
+  if(ps && ps.classList.contains("open")) return true;
   var a = document.activeElement;
   if(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return true;
   return false;
