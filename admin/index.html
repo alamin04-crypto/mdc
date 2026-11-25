@@ -3001,7 +3001,7 @@ function reportDocInner(r){
     + '<div><b>Test date:</b> ' + esc(r.testDate || "-") + ' · <b>Uploaded:</b> ' + esc(r.uploaded) + '</div>'
     + '<div><b>Report verified by:</b> ' + esc(r.doctor) + '</div>'
     + '<div><b>Report file:</b> ' + esc(r.file) + ' (' + esc(r.type) + ')</div>'
-    + '<p style="color:#666;font-size:13px">This is the report cover / delivery copy. The original uploaded file (' + esc(r.file) + ') is the medical report itself and stays attached to this record in the patient profile.</p>';
+    + (r.img ? '<div style="margin-top:12px"><img src="' + r.img + '" alt="Uploaded report" style="max-width:100%"/></div><p style="color:#666;font-size:13px">The picture above is the uploaded report itself (' + esc(r.file) + '), printed with this cover copy.</p>' : '<p style="color:#666;font-size:13px">This is the report cover / delivery copy. The original uploaded file (' + esc(r.file) + ') is the medical report itself and stays attached to this record in the patient profile.</p>');
 }
 function reportPdfLines(r){
   var p = patientById(r.pid), L = [];
@@ -3086,6 +3086,44 @@ function repTestOptionsHTML(selectedName){
 
 /* =================== Report Upload =================== */
 var REP_PRESET = null; /* {pid, test} — set from a pending request or a patient profile */
+/* The uploaded report itself, kept as a picture on the record so the doctor
+   (and every role with report permission) can SEE the report — not just its
+   file name. Photos and scans are shrunk to a readable size before saving,
+   the same way the payment QR image is stored; a small PDF is kept whole so
+   it can be read in the viewer. Older records hold only a file name — the
+   viewer says so, and Replace / edit can attach the picture to them. */
+function readReportFile(file, cb){
+  if(!file){ cb({}); return; }
+  var isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+  var rd = new FileReader();
+  rd.onerror = function(){ cb({}); };
+  rd.onload = function(){
+    if(isPdf){
+      cb(file.size <= 1500000 ? {fileData: String(rd.result || "")} : {});
+      return;
+    }
+    var img = new Image();
+    img.onload = function(){
+      var max = 1100, w = img.width, h = img.height, sc = Math.min(1, max / Math.max(w, h));
+      var cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w * sc)); cv.height = Math.max(1, Math.round(h * sc));
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      cb({img: cv.toDataURL("image/jpeg", 0.85)});
+    };
+    img.onerror = function(){ cb({}); };
+    img.src = rd.result;
+  };
+  rd.readAsDataURL(file);
+}
+function repThumbHTML(r){
+  if(r.img) return '<img src="' + r.img + '" alt="Report picture — ' + esc(r.test) + '" title="Tap to see the full report picture" data-rep-view="' + r.id + '" style="width:60px;height:76px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:var(--surface2);flex:0 0 60px;cursor:pointer" />';
+  return '<div data-rep-view="' + r.id + '" title="Tap to open this report" style="width:40px;height:40px;border-radius:10px;background:var(--blue-soft);color:var(--blue);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 40px;cursor:pointer">' + r.type + '</div>';
+}
+function repPictureHTML(r){
+  if(r.img) return '<div style="margin:12px 0 4px"><div class="t-sub" style="margin-bottom:6px">The uploaded report — picture</div><img src="' + r.img + '" alt="Uploaded report — ' + esc(r.test) + '" style="width:100%;max-height:70vh;object-fit:contain;border:1px solid var(--line);border-radius:12px;background:var(--surface2)" /></div>';
+  if(r.fileData) return '<div style="margin:12px 0 4px"><div class="t-sub" style="margin-bottom:6px">The uploaded report — PDF</div><iframe src="' + r.fileData + '" title="Uploaded report PDF — ' + esc(r.test) + '" style="width:100%;height:56vh;border:1px solid var(--line);border-radius:12px;background:var(--surface2)"></iframe></div>';
+  return '<div class="t-sub" style="margin:12px 0 4px">No picture is attached to this record — when it was uploaded, only the file name (' + esc(r.file) + ') was saved. Reports uploaded now keep the picture itself; use <b>Replace / edit</b> on this report to attach the file, and its picture will show here.</div>';
+}
 function renderReports(){
   var canUp = can("reportUpload");
   var preset = REP_PRESET; REP_PRESET = null;
@@ -3112,7 +3150,7 @@ function renderReports(){
     + '<div class="field full"><label>Test / investigation — from Test Services &amp; Prices</label><select name="test" id="repTestSel" required>' + repTestOptionsHTML(preset ? preset.test : null) + '</select><div class="t-sub" style="margin-top:5px">This list is the test catalogue itself: add a new test in <b>Test Services &amp; Prices</b> and it appears here automatically — the test name never has to be typed by hand.</div></div>'
     + '<div class="field"><label>Test date</label><input name="testDate" placeholder="e.g. 23 Nov 2026" /></div>'
     + '<div class="field full"><label>Report verified by (doctor name &amp; designation)</label><select name="doctor">' + state.doctors.map(function(d){ return '<option>' + esc(d.name + ", " + d.deg) + '</option>'; }).join("") + '</select></div>'
-    + '<div class="field full"><label>Report file (PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Demo: the file name is recorded; the file itself is not stored.</div></div></div>'
+    + '<div class="field full"><label>Report file (PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">The report picture is saved with the record, so the doctor can see the report itself — in this list, in the viewer and in the patient profile. Big photos are shrunk automatically; a PDF up to about 1.5 MB is kept whole so it can be read in the viewer.</div></div></div>'
     + '</div><button class="btn primary" type="submit" style="min-height:44px">Upload report</button></form></div>'
     + listCard + '</div>';
   } else {
@@ -3162,11 +3200,16 @@ function renderReports(){
       var f = $("#repFile").files[0];
       var fname = f ? f.name : "report_scan.pdf";
       var type = /\.pdf$/i.test(fname) ? "PDF" : "Image";
-      var rep = {id:"REP-0" + (++state.seq.report), patient:pat.name, pid:pat.id, test: svc ? svc.name : testName, svcId: svc ? svc.id : "", invId: repFormEl.dataset.inv || "", testDate:fd.get("testDate")||"Today", file:fname, type:type, doctor:fd.get("doctor"), uploaded:"Just now", status:"Pending review", history:[{what:"Uploaded (" + fname + ")" + (repFormEl.dataset.inv ? " — against invoice " + repFormEl.dataset.inv : ""), by:session.name + " (" + activeRoleName() + ")", time:"Just now"}]};
-      state.reports.unshift(rep);
-      logActivity("rep", "Report <b>" + rep.id + "</b> uploaded — " + esc(rep.test) + ", " + pat.id + " — now visible in the patient's profile");
-      pushNotification("Report", "Report uploaded — " + rep.test + " for " + pat.name + " (" + pat.id + "), pending review");
-      refresh(); toast("Report " + rep.id + " uploaded for " + pat.name + " — see it in their profile, pending review");
+      var invId = repFormEl.dataset.inv || "", docName = fd.get("doctor"), tDate = fd.get("testDate")||"Today";
+      readReportFile(f, function(att){
+        var rep = {id:"REP-0" + (++state.seq.report), patient:pat.name, pid:pat.id, test: svc ? svc.name : testName, svcId: svc ? svc.id : "", invId: invId, testDate:tDate, file:fname, type:type, doctor:docName, uploaded:"Just now", status:"Pending review", history:[{what:"Uploaded (" + fname + ")" + (invId ? " — against invoice " + invId : "") + (att.img || att.fileData ? " — the report picture is attached, so it can be viewed" : ""), by:session.name + " (" + activeRoleName() + ")", time:"Just now"}]};
+        if(att.img) rep.img = att.img;
+        if(att.fileData) rep.fileData = att.fileData;
+        state.reports.unshift(rep);
+        logActivity("rep", "Report <b>" + rep.id + "</b> uploaded — " + esc(rep.test) + ", " + pat.id + " — now visible in the patient's profile");
+        pushNotification("Report", "Report uploaded — " + rep.test + " for " + pat.name + " (" + pat.id + "), pending review");
+        refresh(); toast("Report " + rep.id + " uploaded for " + pat.name + " — see it in their profile, pending review");
+      });
     });
   }
 }
@@ -3200,7 +3243,7 @@ function drawReports(){
   });
   el.innerHTML = rows.length ? rows.map(function(r){
     return '<div style="padding:12px 0;border-bottom:1px solid var(--line)"><div style="display:flex;gap:11px;align-items:flex-start">'
-      + '<div style="width:40px;height:40px;border-radius:10px;background:var(--blue-soft);color:var(--blue);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex:0 0 40px">' + r.type + '</div>'
+      + repThumbHTML(r)
       + '<div style="min-width:0"><div class="t-name">' + esc(r.test) + ' — ' + esc(r.patient) + '</div>'
       + '<div class="t-sub mono">' + r.id + ' · ' + esc(r.file) + '</div>'
       + '<div class="t-sub">' + esc(r.doctor) + ' · Test: ' + esc(r.testDate||"—") + ' · Uploaded ' + esc(r.uploaded) + ' · Patient ' + r.pid + (canSeeDoctorNote(r) && r.doctorNote && r.doctorNote.text ? ' · <b>Private doctor note added</b>' : '') + '</div></div>'
@@ -3222,6 +3265,7 @@ function reportDetail(r){
   var canSee = canSeeDoctorNote(r), canWrite = canWriteDoctorNote(r);
   var note = r.doctorNote || null;
   var html = '<h3>' + esc(r.test) + ' — ' + r.id + '</h3><p class="m-sub">' + esc(r.patient) + ' (' + r.pid + ') · ' + esc(r.file) + ' · Verified by ' + esc(r.doctor) + '<br/>Test date: ' + esc(r.testDate || "—") + ' · Uploaded ' + esc(r.uploaded) + ' · Status: ' + esc(r.status) + '</p>';
+  html += repPictureHTML(r);
   if(canSee || canWrite){
     html += '<div style="border-top:1px solid var(--line);padding-top:12px;margin-top:2px"><h4 style="font-size:15px;margin:0 0 4px">Doctor\'s private note</h4>'
       + '<div class="t-sub" style="margin-bottom:8px">Visible only to this report\'s own doctor, the CEO and the Super Admin — never to the patient, never to other doctors or other roles, and never printed or exported.</div>';
@@ -3261,16 +3305,26 @@ function reportEditForm(r){
     + '<div class="field full"><label>Test / investigation — from Test Services &amp; Prices</label><select name="test" required>' + repTestOptionsHTML(r.test) + '</select></div>'
     + '<div class="field"><label>Test date</label><input name="testDate" value="' + esc(r.testDate||"") + '" /></div>'
     + '<div class="field full"><label>Verified by (doctor &amp; designation)</label><select name="doctor">' + state.doctors.map(function(d){ var v = d.name + ", " + d.deg; return '<option' + (v===r.doctor ? " selected" : "") + '>' + esc(v) + '</option>'; }).join("") + '</select></div>'
-    + '<div class="field full"><label>Replace file (optional — PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repEditFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Current file: ' + esc(r.file) + '</div></div></div>'
+    + '<div class="field full"><label>Replace file (optional — PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repEditFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Current file: ' + esc(r.file) + '</div>' + (r.img ? '<img src="' + r.img + '" alt="Current report picture" style="margin-top:8px;width:84px;height:108px;object-fit:cover;border-radius:8px;border:1px solid var(--line)" /><div class="t-sub" style="margin-top:4px">The picture currently attached — picking a new file replaces it.</div>' : '<div class="t-sub" style="margin-top:4px">No picture is attached to this record yet — pick the report file here and its picture will be saved with it.</div>') + '<div class="t-sub" style="margin-top:4px">A PDF up to about 1.5 MB is kept whole so it can be read in the viewer; a bigger PDF is recorded by name only, and a picture already attached to the report is kept.</div></div></div>'
     + '</div>' + mActions("Save changes") + '</form>');
   $("#repEditForm").addEventListener("submit", function(e){
     e.preventDefault(); var fd = new FormData(e.target);
     var f = $("#repEditFile").files[0];
-    r.test = fd.get("test"); r.testDate = fd.get("testDate"); r.doctor = fd.get("doctor");
-    if(f){ r.file = f.name; r.type = /\.pdf$/i.test(f.name) ? "PDF" : "Image"; repHistoryPush(r, "File replaced with " + f.name); }
-    else repHistoryPush(r, "Details edited");
-    logActivity("rep", "Report <b>" + r.id + "</b> edited by " + session.name);
-    closeModal(); refresh(); toast("Report " + r.id + " updated");
+    function apply(att){
+      r.test = fd.get("test"); r.testDate = fd.get("testDate"); r.doctor = fd.get("doctor");
+      var keptPic = false;
+      if(f){
+        r.file = f.name; r.type = /\.pdf$/i.test(f.name) ? "PDF" : "Image";
+        if(att && att.img){ r.img = att.img; delete r.fileData; }
+        else if(att && att.fileData){ r.fileData = att.fileData; delete r.img; }
+        else if(r.img || r.fileData){ keptPic = true; }
+        repHistoryPush(r, "File replaced with " + f.name + ((att && (att.img || att.fileData)) ? " — the report picture is attached, so it can be viewed" : (keptPic ? " — the new file could not be attached as a picture (a PDF over about 1.5 MB, or the file could not be read), so the picture already attached was kept" : "")));
+      }
+      else repHistoryPush(r, "Details edited");
+      logActivity("rep", "Report <b>" + r.id + "</b> edited by " + session.name);
+      closeModal(); refresh(); toast(keptPic ? "Report " + r.id + " updated — the new file was too large to attach as a picture, so the picture already on the report was kept" : "Report " + r.id + " updated");
+    }
+    if(f) readReportFile(f, apply); else apply(null);
   });
 }
 document.addEventListener("click", function(e){
@@ -4408,7 +4462,7 @@ function openPatientProfile(pid){
             }).join("") : '<div class="t-sub">Nothing pending — every booked test for this patient already has a report.</div>');
       })()
     + '<h4 style="margin:16px 0 2px;font-size:15px">Reports (' + reps.length + ')</h4>'
-    + (reps.length ? reps.map(function(r){ return row(esc(r.test), r.id + ' · ' + esc(r.file) + ' · ' + esc(r.uploaded) + (canSeeDoctorNote(r) && r.doctorNote && r.doctorNote.text ? ' · Private doctor note added' : ''), pillFor(r.status) + '<button class="btn small" data-rep-view="' + r.id + '">View</button>' + (can("reportDownload") ? '<button class="btn small" data-rep-pdf="' + r.id + '">PDF</button><button class="btn small" data-rep-print="' + r.id + '">Print</button>' : '') + (can("reportUpload") && r.status === "Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')); }).join("") : '<div class="t-sub">No reports yet.</div>')
+    + (reps.length ? reps.map(function(r){ return row((r.img ? '<img src="' + r.img + '" alt="Report picture — ' + esc(r.test) + '" title="Tap to see the full report picture" data-rep-view="' + r.id + '" style="width:30px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--line);vertical-align:-11px;margin-right:7px;cursor:pointer" />' : '') + esc(r.test), r.id + ' · ' + esc(r.file) + ' · ' + esc(r.uploaded) + (canSeeDoctorNote(r) && r.doctorNote && r.doctorNote.text ? ' · Private doctor note added' : ''), pillFor(r.status) + '<button class="btn small" data-rep-view="' + r.id + '">View</button>' + (can("reportDownload") ? '<button class="btn small" data-rep-pdf="' + r.id + '">PDF</button><button class="btn small" data-rep-print="' + r.id + '">Print</button>' : '') + (can("reportUpload") && r.status === "Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')); }).join("") : '<div class="t-sub">No reports yet.</div>')
     + '<h4 style="margin:16px 0 2px;font-size:15px">Change history</h4>'
     + ((p.history && p.history.length) ? p.history.map(function(h){ return row(esc(h.what), 'By ' + esc(h.by) + ' · ' + esc(h.time), ""); }).join("") : '<div class="t-sub">No changes recorded — the full history of every edit is kept here.</div>')
     + '<div class="m-actions"><button class="btn" data-close>Close</button><button class="btn" data-pat-goto="' + p.id + '">Open in Patients page</button>' + (can("testBooking") ? '<button class="btn primary" data-pat-inv="' + p.id + '">New invoice</button>' : '') + '</div>';
