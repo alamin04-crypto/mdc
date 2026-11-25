@@ -343,9 +343,12 @@
       .seg-toggle button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:0;background:transparent;border-radius:6px;padding:3px 4px;font-weight:600;color:var(--ink2);min-height:24px;font-size:12.5px;line-height:1.2;cursor:pointer}
       .seg-toggle button svg{flex:0 0 auto}
       .seg-toggle button.active{background:var(--surface);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.14)}
+      #printArea{display:none}
       @media print{
         .sidebar,.topbar,#toast,.modal-wrap{display:none !important}
         body{background:#fff;color:#1d1836}
+        body.printing #app,body.printing #loginGate{display:none !important}
+        body.printing #printArea{display:block !important}
       }
     </style>
   </head>
@@ -477,6 +480,7 @@
     <div class="modal-bg" id="modalBg"></div>
     <div class="modal" id="modalBox"></div>
   </div>
+  <div id="printArea" aria-hidden="true"></div>
   <div id="toast" role="status"></div>
 
 <script>
@@ -1076,7 +1080,8 @@ function refresh(){ renderPage(currentPage); updateBadges(); }
 function updateBadges(){
   var ceo = state.approvals.filter(function(a){ return a.status==="Pending"; }).length;
   var cb = $("#ceoBadge"); cb.hidden = ceo===0; cb.textContent = ceo;
-  var rp = state.reports.filter(function(r){ return r.status==="Pending review"; }).length;
+  var rp = state.reports.filter(function(r){ return r.status==="Pending review"; }).length
+    + (typeof pendingReportRequests === "function" ? pendingReportRequests().length : 0);
   var rb = $("#reportBadge"); rb.hidden = rp===0; rb.textContent = rp;
   var ap = state.appointments.filter(function(a){ return a.status==="Pending"; }).length;
   var ab = $("#apptBadge"); ab.hidden = ap===0; ab.textContent = ap;
@@ -1698,7 +1703,7 @@ function drawDoctors(){
       + '<div class="t-sub">Bookable slots: ' + (sch ? 'window <b style="color:var(--ink)">' + esc(sch.from || "—") + ' – ' + esc(sch.to || "—") + '</b> on chamber days · ' + (slots.length ? slots.map(function(s){ return esc(s); }).join(", ") : 'no slot times set') : 'not set up yet — booking falls back to serial-order times') + '</div>'
       + '<div class="t-sub" style="margin-top:3px">Approved appointments: <b style="color:var(--ink)">' + approvedApptCount(d.name) + '</b> · Visits — Today <b style="color:var(--ink)">' + vs.daily + '</b> · This month <b style="color:var(--ink)">' + vs.monthly + '</b> · This year <b style="color:var(--ink)">' + vs.yearly + '</b></div></div>'
       + '<div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end"><label class="switch" title="Available for booking"><input type="checkbox" data-doc-active="' + d.id + '"' + (d.active ? " checked" : "") + ' /><span class="track"></span></label>'
-      + (canPrintApptList(d) ? '<button class="btn small" data-print-list="' + d.id + '">Download appointment list</button>' : '')
+      + (canPrintApptList(d) ? '<button class="btn small" data-print-list="' + d.id + '">Print / PDF list</button>' : '')
       + (canEditSlots(d) ? '<button class="btn small" data-doc-slots="' + d.id + '">Slots &amp; times</button>' : '')
       + (can("doctorAppt") ? '<button class="btn small" data-doc-edit="' + d.id + '">Edit</button>' : '')
       + '</div></div></div>';
@@ -1770,18 +1775,22 @@ function printApptList(doc){
       + '<td style="padding:6px 10px;border-bottom:1px solid #ddd">' + esc(a.status) + '</td>'
       + '<td style="padding:6px 10px;border-bottom:1px solid #ddd">' + esc(pay.status) + (pay.detail ? ' <span style="color:#555">(' + esc(pay.detail) + ')</span>' : '') + '</td></tr>';
   }).join("") : '<tr><td colspan="7" style="padding:10px">No appointments booked for this doctor yet.</td></tr>';
-  var html = '<!doctype html><html><head><meta charset="utf-8"><title>Appointment list — ' + esc(doc.name) + '</title><style>@media print{body{margin:0}}</style></head><body style="font-family:sans-serif;max-width:820px;margin:24px auto;color:#14201c">'
-    + '<h2 style="margin:0">' + esc(state.settings.centerName) + '</h2><div>' + esc(state.settings.branch) + ' · Hotline ' + esc(state.settings.hotline) + '</div>'
+  var inner = '<h2 style="margin:0">' + esc(state.settings.centerName) + '</h2><div>' + esc(state.settings.branch) + ' · Hotline ' + esc(state.settings.hotline) + '</div>'
     + '<hr/><h3 style="margin:10px 0 2px">Appointment list — ' + esc(doc.name) + '</h3>'
     + '<div>' + esc(doc.deg) + ' · ' + esc(doc.spec) + ' · ' + esc(doc.hospital || state.settings.centerName) + ' · ' + esc(doc.days) + ', ' + esc(doc.time) + '</div>'
-    + '<div style="color:#555;margin-top:4px">' + rows.length + ' booked appointment(s) · Downloaded by ' + esc(session.name) + ' (' + esc(activeRoleName()) + ') · ' + fmtDay(dataToday()) + '</div>'
+    + '<div style="color:#555;margin-top:4px">' + rows.length + ' booked appointment(s) · Prepared by ' + esc(session.name) + ' (' + esc(activeRoleName()) + ') · ' + fmtDay(dataToday()) + '</div>'
     + '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr><th style="text-align:center;padding:6px 10px">Serial</th><th style="text-align:left;padding:6px 10px">Patient</th><th style="text-align:left;padding:6px 10px">Patient ID / Phone</th><th style="text-align:left;padding:6px 10px">Date &amp; time</th><th style="text-align:left;padding:6px 10px">Type</th><th style="text-align:left;padding:6px 10px">Status</th><th style="text-align:left;padding:6px 10px">Payment</th></tr></thead><tbody>' + body + '</tbody></table>'
-    + '<p style="color:#666;font-size:13px">Print this file (Ctrl / Cmd + P) or keep it as the doctor\'s appointment sheet. It contains only this doctor\'s appointments.</p></body></html>';
-  downloadFile("appointment-list-" + doc.id + ".html", html);
-  if(!state.downloads) state.downloads = [];
-  state.downloads.unshift({what:"Appointment list downloaded — " + doc.name + " (" + rows.length + " appointments)", by:session.name + " (" + activeRoleName() + ")", time:"Just now"});
-  logActivity("appt", "Appointment list for <b>" + esc(doc.name) + "</b> downloaded by " + session.name + " — " + rows.length + " appointment(s)");
-  refresh(); toast("Appointment list downloaded — " + doc.name);
+    + '<p style="color:#666;font-size:13px">It contains only this doctor\'s appointments.</p>';
+  var lines = [{t: state.settings.centerName, s: 16, b: 1}, {t: "Appointment list - " + doc.name, s: 13, b: 1}, {t: doc.deg + " - " + doc.spec + " - " + (doc.hospital || state.settings.centerName), s: 10}, {t: rows.length + " booked appointment(s) - " + fmtDay(dataToday()), s: 10, g: 8}];
+  rows.forEach(function(a){
+    var p2 = patientById(a.pid), pay2 = apptPayInfo(a);
+    lines.push({t: "#" + a.serial + "  " + apptPatOf(a) + " (" + a.pid + ")  " + a.date + ", " + a.time, s: 11, b: 1});
+    lines.push({t: "     " + a.type + " - " + a.status + " - Payment: " + pay2.status + (p2 ? " - " + p2.phone : ""), s: 10});
+  });
+  if(!rows.length) lines.push({t: "No appointments booked for this doctor yet.", s: 11});
+  openDocModal("Appointment list — " + doc.name, "Print it, or download it as a real PDF — no HTML file.", inner, "appointment-list-" + doc.id + ".pdf", lines, "Appointment list opened for print / PDF — " + doc.name + " (" + rows.length + " appointments)");
+  logActivity("appt", "Appointment list for <b>" + esc(doc.name) + "</b> opened for print / PDF by " + session.name + " — " + rows.length + " appointment(s)");
+  refresh();
 }
 function drawHospitals(){
   var el = $("#hospList"); if(!el) return;
@@ -2182,7 +2191,7 @@ function drawInvoices(){
           + (inv.status!=="Paid" && inv.status!=="Refunded" && can("paymentAccess") ? '<button class="btn small primary" data-inv-pay="' + inv.id + '">Take payment</button>' : '')
           + (canFileRefund() && refundableOf(inv) > 0 ? '<button class="btn small ghost" data-inv-refund="' + inv.id + '">Request refund</button>' : '')
           + (can("editPayment") ? '<button class="btn small ghost" data-inv-adjust="' + inv.id + '">Adjust</button>' : '')
-          + (can("invoicePrint") ? '<button class="btn small ghost" data-inv-download="' + inv.id + '">Download</button>' : '')
+          + (can("invoicePrint") ? '<button class="btn small ghost" data-inv-print="' + inv.id + '">Print</button><button class="btn small ghost" data-inv-pdf="' + inv.id + '">PDF</button>' : '')
           + '</div></td></tr>';
       }).join("") : '<tr><td colspan="7"><div class="empty">No invoices match your search.</div></td></tr>';
 }
@@ -2276,7 +2285,7 @@ function viewInvoice(id){
     + '<tr><td>Due</td><td class="num">' + tk(t.total - inv.paid) + '</td></tr>'
     + '</table></div></div>'
     + '<div class="m-actions"><button class="btn" data-close>Close</button>'
-    + (can("invoicePrint") ? '<button class="btn" data-inv-download="' + inv.id + '">Download invoice file</button>' : '')
+    + (can("invoicePrint") ? '<button class="btn" data-inv-pdf="' + inv.id + '">Download PDF</button><button class="btn primary" data-inv-print="' + inv.id + '">Print invoice</button>' : '')
     + (canFileRefund() && refundableOf(inv) > 0 ? '<button class="btn" data-inv-refund="' + inv.id + '">Request refund</button>' : '')
     + (inv.status!=="Paid" && inv.status!=="Refunded" && can("paymentAccess") ? '<button class="btn primary" data-inv-pay="' + inv.id + '">Take payment</button>' : '') + '</div>', true);
 }
@@ -2742,21 +2751,8 @@ function downloadFile(filename, content, type){
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
 function invoiceFileHTML(inv){
-  var t = invTotal(inv);
-  var rows = inv.items.map(function(i){ return '<tr><td style="padding:6px 10px;border-bottom:1px solid #ddd">' + esc(i.name) + '</td><td style="padding:6px 10px;border-bottom:1px solid #ddd;text-align:right">' + tk(i.price) + '</td></tr>'; }).join("");
   return '<!doctype html><html><head><meta charset="utf-8"><title>' + inv.id + '</title></head><body style="font-family:sans-serif;max-width:640px;margin:24px auto;color:#14201c">'
-    + '<h2 style="margin:0">' + esc(state.settings.centerName) + '</h2><div>' + esc(state.settings.branch) + ' · Hotline ' + esc(state.settings.hotline) + '</div>'
-    + '<hr/><div><b>Invoice:</b> ' + inv.id + ' · ' + esc(inv.date) + ' · Status: ' + esc(inv.status) + '</div>'
-    + '<div><b>Patient:</b> ' + esc(inv.patient) + ' (' + inv.pid + ')' + (inv.referrer ? ' · Referred by ' + esc(inv.referrer) : '') + (inv.promo ? ' · Promo ' + esc(inv.promo) : '') + '</div>'
-    + '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr><th style="text-align:left;padding:6px 10px">Test / Service</th><th style="text-align:right;padding:6px 10px">Price</th></tr></thead><tbody>' + rows + '</tbody></table>'
-    + '<table style="margin-left:auto;border-collapse:collapse;margin-top:10px"><tr><td style="padding:3px 10px">Subtotal</td><td style="text-align:right;padding:3px 10px">' + tk(t.sub) + '</td></tr>'
-    + (t.disc ? '<tr><td style="padding:3px 10px">Referral discount</td><td style="text-align:right;padding:3px 10px">−' + tk(t.disc) + '</td></tr>' : '')
-    + (t.catDisc ? '<tr><td style="padding:3px 10px">Category discount</td><td style="text-align:right;padding:3px 10px">−' + tk(t.catDisc) + '</td></tr>' : '')
-    + (t.manual ? '<tr><td style="padding:3px 10px">Manual discount</td><td style="text-align:right;padding:3px 10px">−' + tk(t.manual) + '</td></tr>' : '')
-    + '<tr><td style="padding:3px 10px"><b>Final payable</b></td><td style="text-align:right;padding:3px 10px"><b>' + tk(t.total) + '</b></td></tr>'
-    + '<tr><td style="padding:3px 10px">Paid</td><td style="text-align:right;padding:3px 10px">' + tk(inv.paid) + '</td></tr>'
-    + '<tr><td style="padding:3px 10px">Due</td><td style="text-align:right;padding:3px 10px">' + tk(t.total - inv.paid) + '</td></tr></table>'
-    + '<p style="color:#666;font-size:13px">Prices on this invoice are a snapshot from billing time and never change.</p></body></html>';
+    + invoiceDocInner(inv) + '</body></html>';
 }
 document.addEventListener("click", function(e){
   var v = e.target.closest("[data-inv-view]"); if(v){ viewInvoice(v.dataset.invView); return; }
@@ -2765,27 +2761,263 @@ document.addEventListener("click", function(e){
   var dl = e.target.closest("[data-inv-download]");
   if(dl){
     var inv = state.invoices.filter(function(i){ return i.id===dl.dataset.invDownload; })[0]; if(!inv) return;
-    downloadFile(inv.id + ".html", invoiceFileHTML(inv));
-    if(!state.downloads) state.downloads = [];
-    state.downloads.unshift({what: inv.id + " invoice file downloaded", by: session.name + " (" + activeRoleName() + ")", time:"Just now"});
-    logActivity("inv", "Invoice <b>" + inv.id + "</b> downloaded by " + session.name);
-    refresh(); toast("Invoice file downloaded — " + inv.id + " (tracked in the audit log)");
+    openDocModal("Invoice " + inv.id, "Print it, or download it as a real PDF — no HTML file.", invoiceDocInner(inv), inv.id + ".pdf", invoicePdfLines(inv), inv.id + " invoice opened for print / PDF");
+    logActivity("inv", "Invoice <b>" + inv.id + "</b> opened for print / PDF by " + session.name);
   }
 });
 
+/* =================== Documents: print & real PDF download ===================
+   Invoices, test lists and report documents used to download as .html files.
+   Now every document opens in a preview with two real outputs: Print (the
+   browser print dialog, where "Save as PDF" also lives) and Download PDF —
+   a genuine PDF file generated right here in the page, no server involved. */
+function pdfClean(s){
+  return String(s == null ? "" : s)
+    .replace(/৳/g, "BDT ")
+    .replace(/[–—]/g, "-")
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/·/g, "-")
+    .replace(/[^\x20-\x7E]/g, "");
+}
+function pdfEsc(s){ return pdfClean(s).replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)"); }
+function makePdfBlob(lines){
+  /* lines: [{t, s(font size), b(bold), g(extra gap after)}] — paginated A4 */
+  var pages = [], cur = [], y = 792;
+  lines.forEach(function(L){
+    var size = L.s || 11, h = size * 1.5 + (L.g || 0);
+    if(y - h < 54 && cur.length){ pages.push(cur); cur = []; y = 792; }
+    cur.push({t: String(L.t == null ? "" : L.t), s: size, b: !!L.b, y: y});
+    y -= h;
+  });
+  if(cur.length || !pages.length) pages.push(cur);
+  var objs = [];
+  objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  var kids = pages.map(function(_, i){ return (5 + i * 2) + " 0 R"; }).join(" ");
+  objs[2] = "<< /Type /Pages /Kids [" + kids + "] /Count " + pages.length + " >>";
+  objs[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+  objs[4] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+  pages.forEach(function(pg, i){
+    var pNum = 5 + i * 2, cNum = pNum + 1, stream = "";
+    pg.forEach(function(L){
+      if(!L.t) return;
+      stream += "BT /" + (L.b ? "F2" : "F1") + " " + L.s + " Tf 56 " + L.y.toFixed(1) + " Td (" + pdfEsc(L.t) + ") Tj ET\n";
+    });
+    objs[pNum] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents " + cNum + " 0 R >>";
+    objs[cNum] = "<< /Length " + stream.length + " >>\nstream\n" + stream + "endstream";
+  });
+  var out = "%PDF-1.4\n", offsets = [0], maxObj = 4 + pages.length * 2;
+  for(var n = 1; n <= maxObj; n++){
+    offsets[n] = out.length;
+    out += n + " 0 obj\n" + objs[n] + "\nendobj\n";
+  }
+  var xref = out.length;
+  out += "xref\n0 " + (maxObj + 1) + "\n0000000000 65535 f \n";
+  for(var m = 1; m <= maxObj; m++){
+    var off = String(offsets[m]);
+    while(off.length < 10) off = "0" + off;
+    out += off + " 00000 n \n";
+  }
+  out += "trailer\n<< /Size " + (maxObj + 1) + " /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF";
+  return new Blob([out], {type: "application/pdf"});
+}
+function downloadPdf(filename, lines){
+  var blob = makePdfBlob(lines);
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
+}
+function printDocHTML(inner){
+  var pa = $("#printArea");
+  if(!pa){ toast("Printing is not available here — use Download PDF instead"); return; }
+  pa.innerHTML = '<div style="font-family:sans-serif;color:#14201c;max-width:720px;margin:0 auto">' + inner + '</div>';
+  document.body.classList.add("printing");
+  var done = false;
+  function cleanup(){
+    if(done) return; done = true;
+    document.body.classList.remove("printing"); pa.innerHTML = "";
+    window.removeEventListener("afterprint", cleanup);
+  }
+  window.addEventListener("afterprint", cleanup);
+  setTimeout(cleanup, 60000);
+  setTimeout(function(){
+    try { window.print(); }
+    catch(e){ cleanup(); toast("Printing is blocked here — use Download PDF instead"); }
+  }, 60);
+}
+/* Document preview modal — one place for Print + PDF on every document */
+var DOC_CTX = {filename: "document.pdf", lines: []};
+function openDocModal(title, sub, innerHTML, pdfFilename, pdfLines, logWhat){
+  DOC_CTX = {filename: pdfFilename, lines: pdfLines, inner: innerHTML};
+  openModal('<h3>' + esc(title) + '</h3><p class="m-sub">' + esc(sub) + '</p>'
+    + '<div class="invoice-doc">' + innerHTML + '</div>'
+    + '<div class="m-actions"><button class="btn" data-close>Close</button>'
+    + '<button class="btn" data-doc-pdf>Download PDF</button>'
+    + '<button class="btn primary" data-doc-print>Print</button></div>', true);
+  if(logWhat){
+    if(!state.downloads) state.downloads = [];
+    state.downloads.unshift({what: logWhat, by: session.name + " (" + activeRoleName() + ")", time: "Just now"});
+  }
+}
+document.addEventListener("click", function(e){
+  var pr = e.target.closest("[data-doc-print]");
+  if(pr){ printDocHTML(DOC_CTX.inner || ""); return; }
+  var pd = e.target.closest("[data-doc-pdf]");
+  if(pd){ downloadPdf(DOC_CTX.filename, DOC_CTX.lines); toast("PDF downloaded — " + DOC_CTX.filename); return; }
+});
+function invoiceDocInner(inv){
+  var t = invTotal(inv);
+  var rows = inv.items.map(function(i){ return '<tr><td style="padding:6px 10px;border-bottom:1px solid #ddd">' + esc(i.name) + '</td><td style="padding:6px 10px;border-bottom:1px solid #ddd;text-align:right">' + tk(i.price) + '</td></tr>'; }).join("");
+  return '<h2 style="margin:0">' + esc(state.settings.centerName) + '</h2><div>' + esc(state.settings.branch) + ' · Hotline ' + esc(state.settings.hotline) + '</div>'
+    + '<hr/><div><b>Invoice:</b> ' + inv.id + ' · ' + esc(inv.date) + ' · Status: ' + esc(inv.status) + '</div>'
+    + '<div><b>Patient:</b> ' + esc(inv.patient) + ' (' + inv.pid + ')' + (inv.referrer ? ' · Referred by ' + esc(inv.referrer) : '') + (inv.promo ? ' · Promo ' + esc(inv.promo) : '') + '</div>'
+    + '<table style="width:100%;border-collapse:collapse;margin-top:12px"><thead><tr><th style="text-align:left;padding:6px 10px">Test / Service</th><th style="text-align:right;padding:6px 10px">Price</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<table style="margin-left:auto;border-collapse:collapse;margin-top:10px"><tr><td style="padding:3px 10px">Subtotal</td><td style="text-align:right;padding:3px 10px">' + tk(t.sub) + '</td></tr>'
+    + (t.disc ? '<tr><td style="padding:3px 10px">Referral discount</td><td style="text-align:right;padding:3px 10px">-' + tk(t.disc) + '</td></tr>' : '')
+    + (t.catDisc ? '<tr><td style="padding:3px 10px">Category discount</td><td style="text-align:right;padding:3px 10px">-' + tk(t.catDisc) + '</td></tr>' : '')
+    + (t.manual ? '<tr><td style="padding:3px 10px">Manual discount</td><td style="text-align:right;padding:3px 10px">-' + tk(t.manual) + '</td></tr>' : '')
+    + '<tr><td style="padding:3px 10px"><b>Final payable</b></td><td style="text-align:right;padding:3px 10px"><b>' + tk(t.total) + '</b></td></tr>'
+    + '<tr><td style="padding:3px 10px">Paid</td><td style="text-align:right;padding:3px 10px">' + tk(inv.paid) + '</td></tr>'
+    + '<tr><td style="padding:3px 10px">Due</td><td style="text-align:right;padding:3px 10px">' + tk(t.total - inv.paid) + '</td></tr></table>'
+    + '<p style="color:#666;font-size:13px">Prices on this invoice are a snapshot from billing time and never change.</p>';
+}
+function invoicePdfLines(inv){
+  var t = invTotal(inv), L = [];
+  L.push({t: state.settings.centerName, s: 17, b: 1});
+  L.push({t: state.settings.branch + " - Hotline " + state.settings.hotline, s: 10, g: 6});
+  L.push({t: "Invoice: " + inv.id + "   Date: " + inv.date + "   Status: " + inv.status, s: 11, b: 1});
+  L.push({t: "Patient: " + inv.patient + " (" + inv.pid + ")" + (inv.referrer ? "   Referred by: " + inv.referrer : "") + (inv.promo ? "   Promo: " + inv.promo : ""), s: 11, g: 8});
+  L.push({t: "TEST / SERVICE LIST", s: 11, b: 1, g: 2});
+  inv.items.forEach(function(i, ix){ L.push({t: (ix + 1) + ". " + i.name + "  -  " + tk(i.price), s: 11}); });
+  L.push({t: "", s: 6});
+  L.push({t: "Subtotal: " + tk(t.sub), s: 11});
+  if(t.disc) L.push({t: "Referral discount (" + inv.discountPct + "%): -" + tk(t.disc), s: 11});
+  if(t.catDisc) L.push({t: "Category discount (" + inv.catDiscountPct + "%): -" + tk(t.catDisc), s: 11});
+  if(t.manual) L.push({t: "Manual discount: -" + tk(t.manual), s: 11});
+  L.push({t: "Final payable: " + tk(t.total), s: 13, b: 1});
+  L.push({t: "Paid: " + tk(inv.paid) + "   Due: " + tk(t.total - inv.paid), s: 11, g: 8});
+  L.push({t: "Prices on this invoice are a snapshot from billing time and never change.", s: 9});
+  return L;
+}
+function reportDocInner(r){
+  var p = patientById(r.pid);
+  return '<h2 style="margin:0">' + esc(state.settings.centerName) + '</h2><div>' + esc(state.settings.branch) + ' · Hotline ' + esc(state.settings.hotline) + '</div>'
+    + '<hr/><div><b>Report:</b> ' + r.id + ' · Status: ' + esc(r.status) + '</div>'
+    + '<div><b>Patient:</b> ' + esc(r.patient) + ' (' + r.pid + ')' + (p ? ' · ' + esc(p.phone) + ' · ' + p.age + ' yrs · ' + esc(p.blood) : '') + '</div>'
+    + '<div><b>Test / investigation:</b> ' + esc(r.test) + '</div>'
+    + '<div><b>Test date:</b> ' + esc(r.testDate || "-") + ' · <b>Uploaded:</b> ' + esc(r.uploaded) + '</div>'
+    + '<div><b>Report verified by:</b> ' + esc(r.doctor) + '</div>'
+    + '<div><b>Report file:</b> ' + esc(r.file) + ' (' + esc(r.type) + ')</div>'
+    + '<p style="color:#666;font-size:13px">This is the report cover / delivery copy. The original uploaded file (' + esc(r.file) + ') is the medical report itself and stays attached to this record in the patient profile.</p>';
+}
+function reportPdfLines(r){
+  var p = patientById(r.pid), L = [];
+  L.push({t: state.settings.centerName, s: 17, b: 1});
+  L.push({t: state.settings.branch + " - Hotline " + state.settings.hotline, s: 10, g: 6});
+  L.push({t: "Report: " + r.id + "   Status: " + r.status, s: 11, b: 1});
+  L.push({t: "Patient: " + r.patient + " (" + r.pid + ")" + (p ? " - " + p.phone + " - " + p.age + " yrs - " + p.blood : ""), s: 11});
+  L.push({t: "Test / investigation: " + r.test, s: 12, b: 1});
+  L.push({t: "Test date: " + (r.testDate || "-") + "   Uploaded: " + r.uploaded, s: 11});
+  L.push({t: "Report verified by: " + r.doctor, s: 11});
+  L.push({t: "Report file: " + r.file + " (" + r.type + ")", s: 11, g: 8});
+  L.push({t: "This is the report cover / delivery copy. The original uploaded file", s: 9});
+  L.push({t: "stays attached to this record in the patient profile.", s: 9});
+  return L;
+}
+document.addEventListener("click", function(e){
+  var ip = e.target.closest("[data-inv-print]");
+  if(ip){ var inv1 = state.invoices.filter(function(i){ return i.id === ip.dataset.invPrint; })[0]; if(inv1){ DOC_CTX = {filename: inv1.id + ".pdf", lines: invoicePdfLines(inv1), inner: invoiceDocInner(inv1)}; printDocHTML(invoiceDocInner(inv1)); logActivity("inv", "Invoice <b>" + inv1.id + "</b> printed by " + session.name); } return; }
+  var idf = e.target.closest("[data-inv-pdf]");
+  if(idf){ var inv2 = state.invoices.filter(function(i){ return i.id === idf.dataset.invPdf; })[0]; if(inv2){ downloadPdf(inv2.id + ".pdf", invoicePdfLines(inv2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: inv2.id + " invoice PDF downloaded", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); logActivity("inv", "Invoice <b>" + inv2.id + "</b> PDF downloaded by " + session.name); refresh(); toast("Invoice PDF downloaded - " + inv2.id); } return; }
+  var rp = e.target.closest("[data-rep-print]");
+  if(rp){ var r1 = state.reports.filter(function(x){ return x.id === rp.dataset.repPrint; })[0]; if(r1) printDocHTML(reportDocInner(r1)); return; }
+  var rd = e.target.closest("[data-rep-pdf]");
+  if(rd){ var r2 = state.reports.filter(function(x){ return x.id === rd.dataset.repPdf; })[0]; if(r2){ downloadPdf(r2.id + "-" + r2.test.replace(/[^A-Za-z0-9]+/g, "-") + ".pdf", reportPdfLines(r2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: r2.id + " report PDF downloaded (" + r2.test + ", " + r2.patient + ")", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); toast("Report PDF downloaded - " + r2.id); } return; }
+});
+
+/* =================== Pending report requests ===================
+   A report request = a test on a patient's invoice (test booking) that has
+   no report uploaded for it yet. The Report Team works from this list: open
+   the patient, see exactly which reports are still due, upload against the
+   booked test — the test name always comes from the Test Services catalogue,
+   never typed by hand. Matching is loose (word overlap) because older
+   records shortened some test names (e.g. "USG Whole Abdomen"). */
+function testNorm(s){
+  return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+function testNamesMatch(a, b){
+  var na = testNorm(a), nb = testNorm(b);
+  if(!na || !nb) return false;
+  if(na === nb) return true;
+  if(na.indexOf(nb) > -1 || nb.indexOf(na) > -1) return true;
+  var ta = na.split(" ").filter(function(w){ return w.length > 1; });
+  var tb = nb.split(" ").filter(function(w){ return w.length > 1; });
+  if(!ta.length || !tb.length) return false;
+  var setB = {}; tb.forEach(function(w){ setB[w] = 1; });
+  var hit = 0; ta.forEach(function(w){ if(setB[w]) hit++; });
+  return hit / Math.min(ta.length, tb.length) >= 0.6;
+}
+function pendingReportRequests(pidOpt){
+  var out = [], used = {};
+  state.reports.forEach(function(r){ used[r.id] = 0; });
+  state.invoices.forEach(function(inv){
+    if(inv.status === "Refunded") return;
+    if(pidOpt && inv.pid !== pidOpt) return;
+    (inv.items || []).forEach(function(it){
+      var found = null;
+      for(var i = 0; i < state.reports.length; i++){
+        var r = state.reports[i];
+        if(r.pid === inv.pid && !used[r.id] && testNamesMatch(r.test, it.name)){ found = r; break; }
+      }
+      if(found) used[found.id] = 1;
+      else out.push({pid: inv.pid, patient: inv.patient, test: it.name, invId: inv.id, date: inv.date});
+    });
+  });
+  return out;
+}
+function serviceByName(name){
+  return state.services.filter(function(s){ return testNamesMatch(s.name, name); })[0]
+    || state.services.filter(function(s){ return s.name === name; })[0] || null;
+}
+function repTestOptionsHTML(selectedName){
+  var hasMatch = selectedName ? state.services.some(function(s){ return testNamesMatch(s.name, selectedName); }) : true;
+  var prefix = (!hasMatch && selectedName) ? '<option value="' + esc(selectedName) + '" selected>' + esc(selectedName) + ' (existing name)</option>' : '';
+  var cats = [];
+  state.services.forEach(function(s){ if(cats.indexOf(s.cat) < 0) cats.push(s.cat); });
+  return prefix + cats.map(function(c){
+    return '<optgroup label="' + esc(c) + '">' + state.services.filter(function(s){ return s.cat === c; }).map(function(s){
+      return '<option value="' + esc(s.name) + '"' + (selectedName && testNamesMatch(s.name, selectedName) ? " selected" : "") + '>' + esc(s.name) + (s.active ? "" : " (hidden from patients)") + '</option>';
+    }).join("") + '</optgroup>';
+  }).join("");
+}
+
 /* =================== Report Upload =================== */
+var REP_PRESET = null; /* {pid, test} — set from a pending request or a patient profile */
 function renderReports(){
   var canUp = can("reportUpload");
+  var preset = REP_PRESET; REP_PRESET = null;
   var note = '<div class="note-box" style="margin-bottom:16px"><b>Patient privacy:</b> a report is visible only to the patient it belongs to (User ID + login) and to staff with report permission. Doctors and every other role with report permission can view the reports uploaded for any patient — here, and in the patient\'s profile from the header search. Every upload, replace, publish and delete is kept in the report\'s audit history. <b>Deleting a report always needs CEO approval.</b></div>';
+  var allPend = pendingReportRequests();
+  var reqCard = '<div class="card" style="margin-bottom:16px"><div class="card-head"><div><h3>Report requests — still pending (' + allPend.length + ')</h3><div class="card-sub">Tests booked on invoices that have no report uploaded yet. Open the patient to see exactly which of their reports are still due, or upload straight from here — the report then appears in that patient\'s profile.</div></div></div>'
+    + (allPend.length ? allPend.map(function(q){
+        return '<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);flex-wrap:wrap"><div style="min-width:0;flex:1"><div style="font-weight:600">' + esc(q.test) + ' — ' + esc(q.patient) + '</div><div class="t-sub">' + q.pid + ' · Invoice <span class="mono">' + q.invId + '</span> · ' + esc(q.date) + '</div></div>'
+          + '<span class="pill warn">Not uploaded</span>'
+          + (canUp ? '<button class="btn small primary" data-rep-pick="' + q.pid + '" data-rep-pick-test="' + esc(q.test) + '" data-rep-pick-inv="' + q.invId + '">Upload this report</button>' : '')
+          + '<button class="btn small" data-pat-profile="' + q.pid + '">Patient profile</button></div>';
+      }).join("") : '<div class="empty">Nothing pending — every booked test already has a report uploaded.</div>')
+    + '</div>';
   var listCard = '<div class="card"><div class="card-head"><div><h3>Reports</h3><div class="card-sub">' + (canUp ? 'Pending review and published lists' : 'All uploaded patient reports — view only; uploading &amp; publishing is done by the Report Team') + '</div></div></div>'
     + '<div class="seg" id="repSeg" style="margin-bottom:12px"><button data-repf="" class="active">All</button><button data-repf="Pending review">Pending</button><button data-repf="published">Published</button></div>'
     + '<div class="searchbar"><input type="search" id="repSearch" placeholder="Search by User ID, phone number or name…" /></div><div id="repList"></div></div>';
-  var html = note;
+  var html = note + reqCard;
   if(canUp){
-    html += '<div class="grid c2" style="align-items:start"><div class="card"><div class="card-head"><div><h3>Upload report</h3><div class="card-sub">Search the patient by User ID, then attach the report</div></div></div>'
+    var firstPid = preset && preset.pid ? preset.pid : (state.patients[0] ? state.patients[0].id : "");
+    html += '<div class="grid c2" style="align-items:start"><div class="card"><div class="card-head"><div><h3>Upload report</h3><div class="card-sub">Pick the patient, then pick the test from the list — no typing the test name</div></div></div>'
     + '<form id="repForm"><div class="form-grid">'
-    + '<div class="field full"><label>Patient (User ID)</label><select name="pid">' + state.patients.map(function(p){ return '<option value="' + p.id + '">' + esc(p.name) + ' (' + p.id + ')</option>'; }).join("") + '</select></div>'
-    + '<div class="field full"><label>Test / investigation</label><input name="test" required placeholder="e.g. Lipid Profile" /></div>'
+    + '<div class="field full"><label>Patient (User ID)</label><select name="pid" id="repPatientSel">' + state.patients.map(function(p){ return '<option value="' + p.id + '"' + (p.id===firstPid ? " selected" : "") + '>' + esc(p.name) + ' (' + p.id + ')</option>'; }).join("") + '</select></div>'
+    + '<div class="field full"><label>Reports still pending for this patient</label><div id="repPendingBox" style="border:1px solid var(--line);border-radius:10px;padding:10px"></div></div>'
+    + '<div class="field full"><label>Test / investigation — from Test Services &amp; Prices</label><select name="test" id="repTestSel" required>' + repTestOptionsHTML(preset ? preset.test : null) + '</select><div class="t-sub" style="margin-top:5px">This list is the test catalogue itself: add a new test in <b>Test Services &amp; Prices</b> and it appears here automatically — the test name never has to be typed by hand.</div></div>'
     + '<div class="field"><label>Test date</label><input name="testDate" placeholder="e.g. 23 Nov 2026" /></div>'
     + '<div class="field full"><label>Report verified by (doctor name &amp; designation)</label><select name="doctor">' + state.doctors.map(function(d){ return '<option>' + esc(d.name + ", " + d.deg) + '</option>'; }).join("") + '</select></div>'
     + '<div class="field full"><label>Report file (PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Demo: the file name is recorded; the file itself is not stored.</div></div></div>'
@@ -2803,18 +3035,61 @@ function renderReports(){
     drawReports();
   });
   var repFormEl = $("#repForm");
-  if(repFormEl) repFormEl.addEventListener("submit", function(e){
-    e.preventDefault(); var fd = new FormData(e.target);
-    var pat = state.patients.filter(function(p){ return p.id===fd.get("pid"); })[0];
-    var f = $("#repFile").files[0];
-    var fname = f ? f.name : "report_scan.pdf";
-    var type = /\.pdf$/i.test(fname) ? "PDF" : "Image";
-    var rep = {id:"REP-0" + (++state.seq.report), patient:pat.name, pid:pat.id, test:fd.get("test"), testDate:fd.get("testDate")||"Today", file:fname, type:type, doctor:fd.get("doctor"), uploaded:"Just now", status:"Pending review", history:[{what:"Uploaded (" + fname + ")", by:session.name + " (" + activeRoleName() + ")", time:"Just now"}]};
-    state.reports.unshift(rep);
-    logActivity("rep", "Report <b>" + rep.id + "</b> uploaded — " + esc(rep.test) + ", " + pat.id);
-    refresh(); toast("Report " + rep.id + " uploaded — pending review");
-  });
+  if(repFormEl){
+    var patSel = $("#repPatientSel"), testSel = $("#repTestSel");
+    function syncPendingBox(preselect){
+      var box = $("#repPendingBox"); if(!box || !patSel) return;
+      var pend = pendingReportRequests(patSel.value);
+      if(!pend.length){
+        box.innerHTML = '<span class="t-sub">No reports pending for this patient — every booked test already has a report. You can still upload any catalogue test below.</span>';
+        return;
+      }
+      box.innerHTML = pend.map(function(q){
+        return '<button type="button" class="btn small" style="margin:0 6px 6px 0" data-rep-pick="' + q.pid + '" data-rep-pick-test="' + esc(q.test) + '" data-rep-pick-inv="' + q.invId + '">' + esc(q.test) + ' · ' + q.invId + '</button>';
+      }).join("") + '<div class="t-sub">Tap a pending test to select it — ' + pend.length + ' report(s) still due for this patient.</div>';
+      if(preselect && testSel){
+        var svc = serviceByName(pend[0].test);
+        testSel.value = svc ? svc.name : pend[0].test;
+        repFormEl.dataset.inv = pend[0].invId;
+      }
+    }
+    if(patSel) patSel.addEventListener("change", function(){ repFormEl.dataset.inv = ""; syncPendingBox(true); });
+    syncPendingBox(true);
+    if(preset && preset.test && testSel){
+      var svc0 = serviceByName(preset.test);
+      if(svc0) testSel.value = svc0.name;
+      if(preset.inv) repFormEl.dataset.inv = preset.inv;
+    }
+    repFormEl.addEventListener("submit", function(e){
+      e.preventDefault(); var fd = new FormData(e.target);
+      var pat = state.patients.filter(function(p){ return p.id===fd.get("pid"); })[0];
+      if(!pat){ toast("Pick the patient first"); return; }
+      var testName = String(fd.get("test") || "");
+      if(!testName){ toast("Pick the test from the list"); return; }
+      var svc = serviceByName(testName);
+      var f = $("#repFile").files[0];
+      var fname = f ? f.name : "report_scan.pdf";
+      var type = /\.pdf$/i.test(fname) ? "PDF" : "Image";
+      var rep = {id:"REP-0" + (++state.seq.report), patient:pat.name, pid:pat.id, test: svc ? svc.name : testName, svcId: svc ? svc.id : "", invId: repFormEl.dataset.inv || "", testDate:fd.get("testDate")||"Today", file:fname, type:type, doctor:fd.get("doctor"), uploaded:"Just now", status:"Pending review", history:[{what:"Uploaded (" + fname + ")" + (repFormEl.dataset.inv ? " — against invoice " + repFormEl.dataset.inv : ""), by:session.name + " (" + activeRoleName() + ")", time:"Just now"}]};
+      state.reports.unshift(rep);
+      logActivity("rep", "Report <b>" + rep.id + "</b> uploaded — " + esc(rep.test) + ", " + pat.id + " — now visible in the patient's profile");
+      pushNotification("Report", "Report uploaded — " + rep.test + " for " + pat.name + " (" + pat.id + "), pending review");
+      refresh(); toast("Report " + rep.id + " uploaded for " + pat.name + " — see it in their profile, pending review");
+    });
+  }
 }
+/* Picking a pending request (Reports page list, upload-form chips, patient profile) */
+document.addEventListener("click", function(e){
+  var pk = e.target.closest("[data-rep-pick]");
+  if(pk){
+    REP_PRESET = {pid: pk.dataset.repPick, test: pk.dataset.repPickTest || "", inv: pk.dataset.repPickInv || ""};
+    closeModal();
+    if(currentPage === "reports"){ renderReports(); window.scrollTo(0, 0); }
+    else go("reports");
+    toast("Upload form set — " + (pk.dataset.repPickTest || "report") + " for patient " + pk.dataset.repPick);
+    return;
+  }
+});
 var repFilterMode = "";
 function drawReports(){
   var el = $("#repList"); if(!el) return;
@@ -2840,6 +3115,7 @@ function drawReports(){
       + '<div style="margin-left:auto;text-align:right">' + pillFor(r.status)
       + '<div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">'
       + '<button class="btn small" data-rep-view="' + r.id + '">View</button>'
+      + (can("reportDownload") ? '<button class="btn small" data-rep-pdf="' + r.id + '">PDF</button><button class="btn small" data-rep-print="' + r.id + '">Print</button>' : '')
       + '<button class="btn small" data-pat-profile="' + r.pid + '">Patient profile</button>'
       + (canUp && r.status==="Pending review" ? '<button class="btn small primary" data-rep-ready="' + r.id + '">Approve &amp; publish</button>' : '')
       + (canUp && r.status==="Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')
@@ -2864,7 +3140,9 @@ function reportDetail(r){
     }
     html += '</div>';
   }
-  html += '<div class="m-actions"><button class="btn" data-close>Close</button></div>';
+  html += '<div class="m-actions"><button class="btn" data-close>Close</button>'
+    + (can("reportDownload") ? '<button class="btn" data-rep-pdf="' + r.id + '">Download PDF</button><button class="btn primary" data-rep-print="' + r.id + '">Print report</button>' : '')
+    + '</div>';
   openModal(html, true);
   var nf = $("#noteForm");
   if(nf) nf.addEventListener("submit", function(e){
@@ -2888,7 +3166,7 @@ document.addEventListener("click", function(e){
 function reportEditForm(r){
   openModal('<h3>Replace / edit report — ' + r.id + '</h3><p class="m-sub">' + esc(r.test) + ' for ' + esc(r.patient) + ' (' + r.pid + '). The change is recorded in the audit history.</p>'
     + '<form id="repEditForm"><div class="form-grid">'
-    + '<div class="field full"><label>Test / investigation</label><input name="test" required value="' + esc(r.test) + '" /></div>'
+    + '<div class="field full"><label>Test / investigation — from Test Services &amp; Prices</label><select name="test" required>' + repTestOptionsHTML(r.test) + '</select></div>'
     + '<div class="field"><label>Test date</label><input name="testDate" value="' + esc(r.testDate||"") + '" /></div>'
     + '<div class="field full"><label>Verified by (doctor &amp; designation)</label><select name="doctor">' + state.doctors.map(function(d){ var v = d.name + ", " + d.deg; return '<option' + (v===r.doctor ? " selected" : "") + '>' + esc(v) + '</option>'; }).join("") + '</select></div>'
     + '<div class="field full"><label>Replace file (optional — PDF / JPG / PNG)</label><div class="file-drop"><input type="file" id="repEditFile" accept=".pdf,.jpg,.jpeg,.png" style="max-width:100%" /><div class="t-sub" style="margin-top:6px">Current file: ' + esc(r.file) + '</div></div></div>'
@@ -3008,7 +3286,7 @@ function referralDashboard(id){
     + '</div>'
     + '<h4 style="margin:14px 0 4px;font-size:15px">User-wise history (this panel)</h4>'
     + (st.invs.length ? st.invs.map(function(i){ var t = invTotal(i); return '<div class="svc-row"><div><div style="font-weight:600">' + esc(i.patient) + ' <span class="mono t-sub">' + i.id + '</span></div><div class="t-sub">' + i.items.map(function(x){ return esc(x.name); }).join(", ") + ' · ' + esc(i.date) + '</div></div><div style="margin-left:auto;text-align:right"><b>' + tk(t.total) + '</b><div class="t-sub">discount ' + tk(t.disc) + '</div></div></div>'; }).join("") : '<div class="t-sub">No invoices in this panel yet — lifetime totals are shown above.</div>')
-    + '<div class="m-actions"><button class="btn" data-close>Close</button><button class="btn" data-ref-csv="' + r.id + '">Monthly report — Excel (CSV)</button><button class="btn primary" data-ref-pdf="' + r.id + '">Monthly report — download file</button></div>';
+    + '<div class="m-actions"><button class="btn" data-close>Close</button><button class="btn" data-ref-csv="' + r.id + '">Monthly report — Excel (CSV)</button><button class="btn primary" data-ref-pdf="' + r.id + '">Monthly report — Print / PDF</button></div>';
   openModal(html, true);
 }
 function downloadCSV(filename, rows){
@@ -3032,9 +3310,11 @@ document.addEventListener("click", function(e){
   var pf = e.target.closest("[data-ref-pdf]");
   if(pf){ var r2 = state.referrers.filter(function(x){ return x.id===pf.dataset.refPdf; })[0]; if(r2){ var st2 = referralStats(r2);
     var rowsH = st2.invs.map(function(i){ var t = invTotal(i); return '<tr><td style="padding:5px 9px;border-bottom:1px solid #ddd">' + i.id + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd">' + esc(i.patient) + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd">' + esc(i.date) + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd;text-align:right">' + tk(t.total) + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd;text-align:right">' + tk(t.disc) + '</td></tr>'; }).join("");
-    downloadFile("referral-" + r2.id + "-report.html", '<!doctype html><html><head><meta charset="utf-8"><title>Referral report ' + r2.id + '</title></head><body style="font-family:sans-serif;max-width:640px;margin:24px auto;color:#14201c"><h2>Referral monthly report — ' + esc(r2.name) + '</h2><div>' + r2.id + ' · ' + esc(r2.type) + ' · Promo ' + esc(r2.promo||"—") + '</div><p>Total referred users: <b>' + r2.patients + '</b> · Total billed: <b>' + tk(r2.billed) + '</b> · Discount: <b>' + r2.discountPct + '%</b> · Commission payable (separate): <b>' + tk(st2.commission) + '</b></p><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:5px 9px">Invoice</th><th style="text-align:left;padding:5px 9px">Patient</th><th style="text-align:left;padding:5px 9px">Date</th><th style="text-align:right;padding:5px 9px">Amount</th><th style="text-align:right;padding:5px 9px">Discount</th></tr></thead><tbody>' + rowsH + '</tbody></table></body></html>');
-    if(!state.downloads) state.downloads=[]; state.downloads.unshift({what:"Referral report file — " + r2.name, by:session.name, time:"Just now"});
-    toast("Monthly report file downloaded for " + r2.name); } }
+    var innerR = '<h2 style="margin:0">Referral monthly report — ' + esc(r2.name) + '</h2><div>' + r2.id + ' · ' + esc(r2.type) + ' · Promo ' + esc(r2.promo||"—") + '</div><p>Total referred users: <b>' + r2.patients + '</b> · Total billed: <b>' + tk(r2.billed) + '</b> · Discount: <b>' + r2.discountPct + '%</b> · Commission payable (separate): <b>' + tk(st2.commission) + '</b></p><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:5px 9px">Invoice</th><th style="text-align:left;padding:5px 9px">Patient</th><th style="text-align:left;padding:5px 9px">Date</th><th style="text-align:right;padding:5px 9px">Amount</th><th style="text-align:right;padding:5px 9px">Discount</th></tr></thead><tbody>' + rowsH + '</tbody></table>';
+    var linesR = [{t: "Referral monthly report - " + r2.name, s: 15, b: 1}, {t: r2.id + " - " + r2.type + " - Promo " + (r2.promo || "-"), s: 10, g: 6}, {t: "Total referred users: " + r2.patients + "   Total billed: " + tk(r2.billed), s: 11}, {t: "Discount: " + r2.discountPct + "%   Commission payable (separate): " + tk(st2.commission), s: 11, g: 8}];
+    st2.invs.forEach(function(i){ var t = invTotal(i); linesR.push({t: i.id + "  " + i.patient + "  " + i.date + "  Amount " + tk(t.total) + "  Discount " + tk(t.disc), s: 10}); });
+    openDocModal("Referral report — " + r2.name, "Print it, or download it as a real PDF — no HTML file.", innerR, "referral-" + r2.id + "-report.pdf", linesR, "Referral report opened for print / PDF — " + r2.name);
+    } }
 });
 function referrerEditForm(r){
   if(!r) return;
@@ -3579,7 +3859,7 @@ function renderAnalytics(){
     + '<div class="card"><div class="card-head"><div><h3>Top Referrers</h3><div class="card-sub">Approved referrers by referred revenue</div></div></div>' + treemap(refItems, TM_BLUE) + '</div>'
     + '</div>';
   /* Filters */
-  html += '<div class="card" style="margin-bottom:16px"><div class="card-head"><div><h3>Filters</h3><div class="card-sub">Filter by date range, referral, hospital, doctor or category — exports follow the filters</div></div><div class="spacer"></div><button class="btn" id="anaCsvBtn">Export Excel (CSV)</button><button class="btn" id="anaPdfBtn">Export summary file</button></div>'
+  html += '<div class="card" style="margin-bottom:16px"><div class="card-head"><div><h3>Filters</h3><div class="card-sub">Filter by date range, referral, hospital, doctor or category — exports follow the filters</div></div><div class="spacer"></div><button class="btn" id="anaCsvBtn">Export Excel (CSV)</button><button class="btn" id="anaPdfBtn">Summary — Print / PDF</button></div>'
     + '<div class="searchbar" style="margin-bottom:0"><select id="anaRange" data-i18n-opts><option value="6">Last 6 months</option><option value="3">Last 3 months</option><option value="1">This month</option></select>'
     + '<select id="anaYear"><option>2026</option><option>2025</option></select>'
     + '<select id="anaRef" data-i18n-opts><option value="">All referrers</option>' + state.referrers.map(function(r){ return '<option value="' + esc(r.name) + '">' + esc(r.name) + '</option>'; }).join("") + '</select>'
@@ -3644,8 +3924,10 @@ function renderAnalytics(){
   $("#anaPdfBtn").addEventListener("click", function(){
     var totRev2 = 0; state.revenue.forEach(function(r){ totRev2 += r.v; });
     var refRows = state.referrers.filter(function(r){ return r.status === "Approved"; }).map(function(r){ return '<tr><td style="padding:5px 9px;border-bottom:1px solid #ddd">' + esc(r.name) + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd;text-align:right">' + r.patients + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd;text-align:right">' + tk(r.billed) + '</td><td style="padding:5px 9px;border-bottom:1px solid #ddd;text-align:right">' + tk(Math.round(r.billed * r.commissionPct / 100)) + '</td></tr>'; }).join("");
-    downloadFile("analytics-summary.html", '<!doctype html><html><head><meta charset="utf-8"><title>Analytics summary</title></head><body style="font-family:sans-serif;max-width:680px;margin:24px auto;color:#14201c"><h2>' + esc(state.settings.centerName) + ' — Analytics summary</h2><p>Revenue (Jun–Nov 2026): <b>' + tk(totRev2) + '</b> · Patients: <b>' + state.patients.length + '</b> · Doctors: <b>' + state.doctors.length + '</b> · Appointments: <b>' + state.appointments.length + '</b></p><h3>Referral performance</h3><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:5px 9px">Referrer</th><th style="text-align:right;padding:5px 9px">Patients</th><th style="text-align:right;padding:5px 9px">Billed</th><th style="text-align:right;padding:5px 9px">Commission</th></tr></thead><tbody>' + refRows + '</tbody></table></body></html>');
-    toast("Analytics summary file downloaded");
+    var innerA = '<h2 style="margin:0">' + esc(state.settings.centerName) + ' — Analytics summary</h2><p>Revenue (Jun–Nov 2026): <b>' + tk(totRev2) + '</b> · Patients: <b>' + state.patients.length + '</b> · Doctors: <b>' + state.doctors.length + '</b> · Appointments: <b>' + state.appointments.length + '</b></p><h3>Referral performance</h3><table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;padding:5px 9px">Referrer</th><th style="text-align:right;padding:5px 9px">Patients</th><th style="text-align:right;padding:5px 9px">Billed</th><th style="text-align:right;padding:5px 9px">Commission</th></tr></thead><tbody>' + refRows + '</tbody></table>';
+    var linesA = [{t: state.settings.centerName + " - Analytics summary", s: 15, b: 1, g: 4}, {t: "Revenue (Jun-Nov 2026): " + tk(totRev2) + "   Patients: " + state.patients.length + "   Doctors: " + state.doctors.length + "   Appointments: " + state.appointments.length, s: 11, g: 8}, {t: "Referral performance", s: 12, b: 1, g: 2}];
+    state.referrers.filter(function(r){ return r.status === "Approved"; }).forEach(function(r){ linesA.push({t: r.name + "  -  Patients " + r.patients + "  -  Billed " + tk(r.billed) + "  -  Commission " + tk(Math.round(r.billed * r.commissionPct / 100)), s: 10}); });
+    openDocModal("Analytics summary", "Print it, or download it as a real PDF — no HTML file.", innerA, "analytics-summary.pdf", linesA, "Analytics summary opened for print / PDF");
   });
 }
 
@@ -4024,9 +4306,17 @@ function openPatientProfile(pid){
     + '<h4 style="margin:16px 0 2px;font-size:15px">Appointments (' + appts.length + ')</h4>'
     + (appts.length ? appts.map(function(a){ var pay = apptPayInfo(a); return row(esc(apptDocOf(a)), apptIdOf(a) + ' · ' + esc(a.date) + ', ' + esc(a.time) + ' · Serial #' + a.serial + ' · ' + esc(a.type), pillFor(a.status) + (showPay ? ' ' + pillFor(pay.status) : '')); }).join("") : '<div class="t-sub">No appointments yet.</div>')
     + (myDocP ? '' : '<h4 style="margin:16px 0 2px;font-size:15px">Invoices (' + invs.length + ')</h4>'
-      + (invs.length ? invs.map(function(i){ var t = invTotal(i); return row('<span class="mono">' + i.id + '</span> — ' + tk(t.total), esc(i.date) + ' · Paid ' + tk(i.paid) + (i.referrer ? ' · via ' + esc(i.referrer) : ''), pillFor(i.status) + '<button class="btn small" data-inv-view="' + i.id + '">View</button>'); }).join("") : '<div class="t-sub">No invoices yet.</div>'))
+      + (invs.length ? invs.map(function(i){ var t = invTotal(i); return row('<span class="mono">' + i.id + '</span> — ' + tk(t.total), esc(i.date) + ' · Paid ' + tk(i.paid) + (i.referrer ? ' · via ' + esc(i.referrer) : ''), pillFor(i.status) + '<button class="btn small" data-inv-view="' + i.id + '">View</button>' + (can("invoicePrint") ? '<button class="btn small" data-inv-print="' + i.id + '">Print</button><button class="btn small" data-inv-pdf="' + i.id + '">PDF</button>' : '')); }).join("") : '<div class="t-sub">No invoices yet.</div>'))
+    + (function(){
+        var pend = pendingReportRequests(pid);
+        return '<h4 style="margin:16px 0 2px;font-size:15px">Reports still pending (' + pend.length + ')</h4>'
+          + (pend.length ? pend.map(function(q){
+              return row(esc(q.test), 'Booked on invoice <span class="mono">' + q.invId + '</span> · ' + esc(q.date) + ' · No report uploaded yet',
+                '<span class="pill warn">Not uploaded</span>' + (can("reportUpload") ? '<button class="btn small primary" data-rep-pick="' + pid + '" data-rep-pick-test="' + esc(q.test) + '" data-rep-pick-inv="' + q.invId + '">Upload report</button>' : ''));
+            }).join("") : '<div class="t-sub">Nothing pending — every booked test for this patient already has a report.</div>');
+      })()
     + '<h4 style="margin:16px 0 2px;font-size:15px">Reports (' + reps.length + ')</h4>'
-    + (reps.length ? reps.map(function(r){ return row(esc(r.test), r.id + ' · ' + esc(r.file) + ' · ' + esc(r.uploaded) + (canSeeDoctorNote(r) && r.doctorNote && r.doctorNote.text ? ' · Private doctor note added' : ''), pillFor(r.status) + '<button class="btn small" data-rep-view="' + r.id + '">View</button>'); }).join("") : '<div class="t-sub">No reports yet.</div>')
+    + (reps.length ? reps.map(function(r){ return row(esc(r.test), r.id + ' · ' + esc(r.file) + ' · ' + esc(r.uploaded) + (canSeeDoctorNote(r) && r.doctorNote && r.doctorNote.text ? ' · Private doctor note added' : ''), pillFor(r.status) + '<button class="btn small" data-rep-view="' + r.id + '">View</button>' + (can("reportDownload") ? '<button class="btn small" data-rep-pdf="' + r.id + '">PDF</button><button class="btn small" data-rep-print="' + r.id + '">Print</button>' : '') + (can("reportUpload") && r.status === "Ready" ? '<button class="btn small" data-rep-deliver="' + r.id + '">Mark delivered</button>' : '')); }).join("") : '<div class="t-sub">No reports yet.</div>')
     + '<h4 style="margin:16px 0 2px;font-size:15px">Change history</h4>'
     + ((p.history && p.history.length) ? p.history.map(function(h){ return row(esc(h.what), 'By ' + esc(h.by) + ' · ' + esc(h.time), ""); }).join("") : '<div class="t-sub">No changes recorded — the full history of every edit is kept here.</div>')
     + '<div class="m-actions"><button class="btn" data-close>Close</button><button class="btn" data-pat-goto="' + p.id + '">Open in Patients page</button>' + (can("testBooking") ? '<button class="btn primary" data-pat-inv="' + p.id + '">New invoice</button>' : '') + '</div>';
@@ -4645,6 +4935,22 @@ Object.assign(BN, {
 "No fasting needed":"উপবাস লাগবে না","Morning sample preferred":"সকালের নমুনা উত্তম","Mid-stream sample":"মাঝের ধারার নমুনা","None":"কিছুই লাগবে না","Next day":"পরের দিন","Same day":"একই দিন",
 "Blood (EDTA tube)":"রক্ত (EDTA টিউব)","Blood (fluoride tube)":"রক্ত (ফ্লোরাইড টিউব)","Blood (serum)":"রক্ত (সিরাম)","Urine":"প্রস্রাব","Urine (sterile container)":"প্রস্রাব (জীবাণুমুক্ত পাত্র)"
 });
+Object.assign(BN, {
+"Print":"প্রিন্ট","PDF":"PDF","Download PDF":"PDF ডাউনলোড","Print invoice":"ইনভয়েস প্রিন্ট","Print report":"রিপোর্ট প্রিন্ট","Print / PDF list":"প্রিন্ট / PDF তালিকা","Summary — Print / PDF":"সারসংক্ষেপ — প্রিন্ট / PDF","Monthly report — Print / PDF":"মাসিক রিপোর্ট — প্রিন্ট / PDF",
+"Print it, or download it as a real PDF — no HTML file.":"প্রিন্ট করুন, অথবা আসল PDF হিসেবে ডাউনলোড করুন — কোনো HTML ফাইল নয়।",
+"Not uploaded":"আপলোড হয়নি","Upload this report":"এই রিপোর্ট আপলোড করুন","Upload report":"রিপোর্ট আপলোড করুন","Mark delivered":"ডেলিভারি হয়েছে চিহ্নিত করুন","Patient profile":"রোগীর প্রোফাইল",
+"Tests booked on invoices that have no report uploaded yet. Open the patient to see exactly which of their reports are still due, or upload straight from here — the report then appears in that patient's profile.":"ইনভয়েসে বুক করা টেস্ট যেগুলোর রিপোর্ট এখনো আপলোড হয়নি। রোগীকে খুললেই দেখতে পাবেন তার কোন কোন রিপোর্ট বাকি আছে, অথবা এখান থেকেই সরাসরি আপলোড করুন — রিপোর্টটি তখন সেই রোগীর প্রোফাইলে দেখা যাবে।",
+"Nothing pending — every booked test already has a report uploaded.":"কিছু বাকি নেই — প্রতিটি বুক করা টেস্টের রিপোর্ট ইতিমধ্যে আপলোড হয়েছে।",
+"Pick the patient, then pick the test from the list — no typing the test name":"আগে রোগী বেছে নিন, তারপর তালিকা থেকে টেস্ট বেছে নিন — টেস্টের নাম লিখতে হবে না",
+"Reports still pending for this patient":"এই রোগীর যেসব রিপোর্ট এখনো বাকি","Test / investigation — from Test Services & Prices":"টেস্ট / পরীক্ষা — টেস্ট সার্ভিস ও মূল্য থেকে",
+"This list is the test catalogue itself: add a new test in":"এই তালিকাটি টেস্ট ক্যাটালগ নিজেই: নতুন টেস্ট যোগ করুন","and it appears here automatically — the test name never has to be typed by hand.":"এবং তা এখানে নিজে নিজে দেখা যাবে — টেস্টের নাম কখনো হাতে লিখতে হবে না।",
+"No reports pending for this patient — every booked test already has a report. You can still upload any catalogue test below.":"এই রোগীর কোনো রিপোর্ট বাকি নেই — প্রতিটি বুক করা টেস্টের রিপোর্ট ইতিমধ্যে আছে। তবু নিচে যেকোনো ক্যাটালগ টেস্ট আপলোড করতে পারেন।",
+"Tap a pending test to select it —":"পেন্ডিং টেস্টে ট্যাপ করে বেছে নিন —","report(s) still due for this patient.":"টি রিপোর্ট এই রোগীর এখনো বাকি।",
+"Nothing pending — every booked test for this patient already has a report.":"কিছু বাকি নেই — এই রোগীর প্রতিটি বুক করা টেস্টের রিপোর্ট ইতিমধ্যে আছে।",
+"Booked on invoice":"ইনভয়েসে বুক করা","· No report uploaded yet":"· এখনো কোনো রিপোর্ট আপলোড হয়নি",
+"(hidden from patients)":"(রোগীদের কাছে লুকানো)","(existing name)":"(বিদ্যমান নাম)",
+"Test / investigation — from Test Services & Prices":"টেস্ট / পরীক্ষা — টেস্ট সার্ভিস ও মূল্য থেকে"
+});
 
 var BN_MONTHS = {"Jan":"জানুয়ারি","Feb":"ফেব্রুয়ারি","Mar":"মার্চ","Apr":"এপ্রিল","May":"মে","Jun":"জুন","Jul":"জুলাই","Aug":"আগস্ট","Sep":"সেপ্টেম্বর","Oct":"অক্টোবর","Nov":"নভেম্বর","Dec":"ডিসেম্বর"};
 var BN_DIG = {"0":"০","1":"১","2":"২","3":"৩","4":"৪","5":"৫","6":"৬","7":"৭","8":"৮","9":"৯"};
@@ -4726,6 +5032,10 @@ var BN_RE = [
   [/^(\d+) yrs · (.+)$/, function(m){ return m[1] + " বছর · " + m[2]; }],
   [/^(\d+) months$/, function(m){ return m[1] + " মাস"; }],
   [/^Appointments \((\d+)\)$/, function(m){ return "অ্যাপয়েন্টমেন্ট (" + m[1] + ")"; }],
+  [/^Report requests — still pending \((\d+)\)$/, function(m){ return "রিপোর্টের অনুরোধ — এখনো বাকি (" + m[1] + ")"; }],
+  [/^Reports still pending \((\d+)\)$/, function(m){ return "যেসব রিপোর্ট এখনো বাকি (" + m[1] + ")"; }],
+  [/^Reports \((\d+)\)$/, function(m){ return "রিপোর্ট (" + m[1] + ")"; }],
+  [/^Invoices \((\d+)\)$/, function(m){ return "ইনভয়েস (" + m[1] + ")"; }],
   [/^Invoices \((\d+)\)$/, function(m){ return "ইনভয়েস (" + m[1] + ")"; }],
   [/^Reports \((\d+)\)$/, function(m){ return "রিপোর্ট (" + m[1] + ")"; }],
   [/^Appointments with you: (\d+)$/, function(m){ return "আপনার সাথে অ্যাপয়েন্টমেন্ট: " + m[1]; }],
