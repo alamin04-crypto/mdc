@@ -2828,7 +2828,49 @@ function downloadPdf(filename, lines){
   document.body.appendChild(a); a.click();
   setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 400);
 }
-function printDocHTML(inner){
+/* Print through a dedicated hidden iframe holding a standalone document.
+   The old approach printed the whole panel page and relied on @media print
+   rules plus a body.printing class to hide the app and reveal #printArea —
+   on the live site that produced a blank sheet (and in some browsers the
+   click appeared completely dead), because the panel's own layout, theme
+   and modal state all leaked into the print rendering. The iframe document
+   contains ONLY the document being printed, with its own simple styles, so
+   every Print button (invoice, report, appointment list, referral report,
+   analytics summary) prints the same way everywhere. */
+function printDocHTML(inner, title){
+  var doc = '<!doctype html><html><head><meta charset="utf-8"/><title>' + esc(title || "Document") + '</title>'
+    + '<style>@page{margin:14mm}'
+    + 'body{font-family:sans-serif;color:#14201c;font-size:14px;line-height:1.55;margin:0}'
+    + 'table{border-collapse:collapse}td,th{vertical-align:top}'
+    + 'h2{margin:0 0 4px}hr{border:0;border-top:1px solid #999;margin:10px 0}'
+    + '</style></head><body>'
+    + '<div style="max-width:720px;margin:0 auto">' + inner + '</div>'
+    + '</body></html>';
+  try {
+    var fr = document.getElementById("printFrame");
+    if(!fr){
+      fr = document.createElement("iframe");
+      fr.id = "printFrame";
+      fr.setAttribute("aria-hidden", "true");
+      fr.setAttribute("title", "Print frame");
+      fr.style.cssText = "position:fixed;right:0;bottom:0;width:2px;height:2px;border:0;opacity:0.01;pointer-events:none";
+      document.body.appendChild(fr);
+    }
+    var fw = fr.contentWindow, fd = fw.document;
+    fd.open(); fd.write(doc); fd.close();
+    var called = false;
+    var doPrint = function(){
+      if(called) return; called = true;
+      try { fw.focus(); fw.print(); }
+      catch(e){ printViaArea(inner); }
+    };
+    if(fd.readyState === "complete") setTimeout(doPrint, 60);
+    else { fr.onload = function(){ setTimeout(doPrint, 60); }; setTimeout(doPrint, 800); }
+  } catch(e){ printViaArea(inner); }
+}
+/* Fallback: the original #printArea + body.printing route, kept only for
+   the rare browser where the print frame cannot be created. */
+function printViaArea(inner){
   var pa = $("#printArea");
   if(!pa){ toast("Printing is not available here — use Download PDF instead"); return; }
   pa.innerHTML = '<div style="font-family:sans-serif;color:#14201c;max-width:720px;margin:0 auto">' + inner + '</div>';
@@ -2862,7 +2904,7 @@ function openDocModal(title, sub, innerHTML, pdfFilename, pdfLines, logWhat){
 }
 document.addEventListener("click", function(e){
   var pr = e.target.closest("[data-doc-print]");
-  if(pr){ printDocHTML(DOC_CTX.inner || ""); return; }
+  if(pr){ printDocHTML(DOC_CTX.inner || "", String(DOC_CTX.filename || "Document").replace(/\.pdf$/i, "")); return; }
   var pd = e.target.closest("[data-doc-pdf]");
   if(pd){ downloadPdf(DOC_CTX.filename, DOC_CTX.lines); toast("PDF downloaded — " + DOC_CTX.filename); return; }
 });
@@ -2927,11 +2969,11 @@ function reportPdfLines(r){
 }
 document.addEventListener("click", function(e){
   var ip = e.target.closest("[data-inv-print]");
-  if(ip){ var inv1 = state.invoices.filter(function(i){ return i.id === ip.dataset.invPrint; })[0]; if(inv1){ DOC_CTX = {filename: inv1.id + ".pdf", lines: invoicePdfLines(inv1), inner: invoiceDocInner(inv1)}; printDocHTML(invoiceDocInner(inv1)); logActivity("inv", "Invoice <b>" + inv1.id + "</b> printed by " + session.name); } return; }
+  if(ip){ var inv1 = state.invoices.filter(function(i){ return i.id === ip.dataset.invPrint; })[0]; if(inv1){ DOC_CTX = {filename: inv1.id + ".pdf", lines: invoicePdfLines(inv1), inner: invoiceDocInner(inv1)}; printDocHTML(invoiceDocInner(inv1), "Invoice " + inv1.id); logActivity("inv", "Invoice <b>" + inv1.id + "</b> printed by " + session.name); } return; }
   var idf = e.target.closest("[data-inv-pdf]");
   if(idf){ var inv2 = state.invoices.filter(function(i){ return i.id === idf.dataset.invPdf; })[0]; if(inv2){ downloadPdf(inv2.id + ".pdf", invoicePdfLines(inv2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: inv2.id + " invoice PDF downloaded", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); logActivity("inv", "Invoice <b>" + inv2.id + "</b> PDF downloaded by " + session.name); refresh(); toast("Invoice PDF downloaded - " + inv2.id); } return; }
   var rp = e.target.closest("[data-rep-print]");
-  if(rp){ var r1 = state.reports.filter(function(x){ return x.id === rp.dataset.repPrint; })[0]; if(r1) printDocHTML(reportDocInner(r1)); return; }
+  if(rp){ var r1 = state.reports.filter(function(x){ return x.id === rp.dataset.repPrint; })[0]; if(r1) printDocHTML(reportDocInner(r1), "Report " + r1.id); return; }
   var rd = e.target.closest("[data-rep-pdf]");
   if(rd){ var r2 = state.reports.filter(function(x){ return x.id === rd.dataset.repPdf; })[0]; if(r2){ downloadPdf(r2.id + "-" + r2.test.replace(/[^A-Za-z0-9]+/g, "-") + ".pdf", reportPdfLines(r2)); if(!state.downloads) state.downloads = []; state.downloads.unshift({what: r2.id + " report PDF downloaded (" + r2.test + ", " + r2.patient + ")", by: session.name + " (" + activeRoleName() + ")", time: "Just now"}); toast("Report PDF downloaded - " + r2.id); } return; }
 });
@@ -4546,6 +4588,24 @@ function ensureFirebaseLib(){
    shown again), only reports Offline after a real, sustained disconnect,
    force-recycles a black-holed socket, and re-sends any write that failed. */
 var fbRef = null, fbDb = null, fbReady = false, firstSnap = false, applying = false, pushTimer = null, lastJson = "", retries = 0, started = false, everLive = false, connectedNow = false, offTimer = null, stuckTimer = null, pushRetryTimer = null;
+/* Canonical snapshot string: object keys sorted at every depth, so two
+   snapshots with identical content always produce the identical string.
+   Plain JSON.stringify comparison was NOT safe here — Firebase returns
+   record keys in its own order while the local state builds them in
+   insertion order, and migrateState() rewrites records on every apply, so
+   the "changed?" test kept answering yes for unchanged data. Every remote
+   event from any of the three clients then triggered a full panel
+   re-render, and a re-render landing between a tap's press and release
+   silently eats the click — the panel intermittently "stopped responding
+   to clicks" (nav, View, even dialog buttons) until a reload. All
+   lastJson comparisons below go through canon(). */
+function canon(v){
+  if(v === null || typeof v !== "object") return JSON.stringify(v);
+  if(Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  var ks = Object.keys(v).sort(), out = [];
+  for(var i = 0; i < ks.length; i++) out.push(JSON.stringify(ks[i]) + ":" + canon(v[ks[i]]));
+  return "{" + out.join(",") + "}";
+}
 /* REST fallback transport state (see the REST section below): "sdk" is the
    Firebase SDK socket; "rest" is plain HTTPS polling/PUT against the same
    node. The REST path exists because the SDK path can be dead on a desktop
@@ -4559,7 +4619,7 @@ function schedulePush(){
 function doPush(){
   if(transport === "rest"){ restPut(); return; }
   if(!fbRef) return;
-  var snap = snapshotState(), j = JSON.stringify(snap);
+  var snap = snapshotState(), j = canon(snap);
   if(j === lastJson) return;
   var prevJson = lastJson;
   fbRef.set(snap).then(function(){
@@ -4658,7 +4718,7 @@ function restGet(){
   });
 }
 function restPut(){
-  var snap = snapshotState(), j = JSON.stringify(snap);
+  var snap = snapshotState(), j = canon(snap);
   if(j === lastJson) return;
   var prevJson = lastJson;
   restRequest("PUT", snap).then(function(r){
@@ -4682,13 +4742,13 @@ function restPoll(){
       firstSnap = true;
       noteConnected();
       var seed = snapshotState();
-      lastJson = JSON.stringify(seed);
+      lastJson = canon(seed);
       restRequest("PUT", seed).then(function(r){ if(r && r.ok){ restEtag = null; } }).catch(function(){});
       return;
     }
     var norm = {};
     KEYS.forEach(function(k){ if(v[k] !== undefined) norm[k] = ARRKEYS[k] ? asArray(v[k]) : v[k]; });
-    var j = JSON.stringify(norm);
+    var j = canon(norm);
     firstSnap = true;
     noteConnected();
     if(j === lastJson) return;
@@ -4697,11 +4757,16 @@ function restPoll(){
        baseline exists (lastJson set) — on first contact the remote record
        wins, exactly as the SDK path's first snapshot does, because the
        local copy before first sync is only the built-in starter state. */
-    if(lastJson !== "" && JSON.stringify(snapshotState()) !== lastJson){ doPush(); return; }
+    if(lastJson !== "" && canon(snapshotState()) !== lastJson){ doPush(); return; }
     applying = true;
     applyRemote(v);
-    lastJson = JSON.stringify(snapshotState());
-    try { refresh(); } catch(e){}
+    /* Baseline = the remote form just applied, NOT the local snapshot: if
+       migrateState() rewrote anything while applying, the refresh below
+       schedules a push that publishes the migrated form once, so the next
+       poll matches and the panel goes quiet instead of re-rendering on
+       every remote event. */
+    lastJson = j;
+    try { refreshFromSync(); } catch(e){}
     applying = false;
   }).catch(function(){
     if(!restOn) return;
@@ -4776,20 +4841,23 @@ function startListener(){
         firstSnap = true;
         noteConnected();
         var seed = snapshotState();
-        lastJson = JSON.stringify(seed);
+        lastJson = canon(seed);
         fbRef.set(seed).catch(function(){});
         return;
       }
       var norm = {};
       KEYS.forEach(function(k){ if(v[k] !== undefined) norm[k] = ARRKEYS[k] ? asArray(v[k]) : v[k]; });
-      var j = JSON.stringify(norm);
+      var j = canon(norm);
       firstSnap = true;
       noteConnected();
       if(j === lastJson) return;
       applying = true;
       applyRemote(v);
-      lastJson = JSON.stringify(snapshotState());
-      try { refresh(); } catch(e){}
+      /* Baseline = the remote form just applied (see the REST poll path):
+         migration rewrites get published once by the refresh's push, then
+         echoes match and stop re-rendering the panel. */
+      lastJson = j;
+      try { refreshFromSync(); } catch(e){}
       applying = false;
     }, function(){ setSyncDebounced(true); startRest(); });
   } catch(e){ started = false; fbDb = null; scheduleRetry(); }
@@ -4798,6 +4866,47 @@ function startListener(){
 /* ---------- Wrap refresh(): every change in this panel is pushed live ---------- */
 var _origRefresh = refresh;
 refresh = function(){ _origRefresh(); schedulePush(); try { applyPermissions(); } catch(e){} try { if(window.__i18nApply) window.__i18nApply(document.body); } catch(e){} };
+
+/* ---------- Sync-triggered refresh, guarded by interaction ----------
+   A remote snapshot re-renders the whole section. If that lands while the
+   user is mid-tap (press and release straddle the re-render, so the click
+   never fires), while a dialog is open, or while they are typing in a
+   field, the panel feels dead — taps do nothing and forms lose their
+   input. Sync refreshes therefore defer while the user is busy and flush
+   as soon as they let go (checked every 700ms), with a 5s cap so live
+   data still lands promptly. User-initiated refresh() calls are NOT
+   guarded — they are the direct result of the user's own action. */
+var ptrDown = false, syncRefreshPending = false, syncRefreshTimer = null, syncRefreshSince = 0;
+document.addEventListener("pointerdown", function(){ ptrDown = true; }, true);
+document.addEventListener("pointerup", function(){ ptrDown = false; }, true);
+document.addEventListener("pointercancel", function(){ ptrDown = false; }, true);
+function userBusy(){
+  if(ptrDown) return true;
+  var mw = document.getElementById("modalWrap");
+  if(mw && mw.classList.contains("open")) return true;
+  var a = document.activeElement;
+  if(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable)) return true;
+  return false;
+}
+function refreshFromSync(){
+  if(!userBusy()){
+    syncRefreshPending = false;
+    if(syncRefreshTimer){ clearTimeout(syncRefreshTimer); syncRefreshTimer = null; }
+    refresh();
+    return;
+  }
+  if(!syncRefreshPending){ syncRefreshPending = true; syncRefreshSince = Date.now(); }
+  if(Date.now() - syncRefreshSince > 5000){
+    syncRefreshPending = false;
+    refresh();
+    return;
+  }
+  if(syncRefreshTimer) return;
+  syncRefreshTimer = setTimeout(function(){
+    syncRefreshTimer = null;
+    if(syncRefreshPending) refreshFromSync();
+  }, 700);
+}
 
 /* Toggles that mutate without refresh() (doctor/service visibility, support switches) */
 document.addEventListener("change", function(e){
